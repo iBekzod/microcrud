@@ -1,11 +1,12 @@
 {
-    "name": "voltiva/microcrud",
-    "description": "Code Structure",
+    "name": "ibekzod/microcrud",
+    "description": "CRUD Structure for backed developers! ",
     "type": "library",
     "keywords": [
         "ibekzod",
         "microcrud",
-        "laravel"
+        "laravel",
+        "crud"
     ],
     "require": {
         "php": ">=7.4.0",

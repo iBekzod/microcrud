@@ -551,7 +551,7 @@ abstract class Service implements ServiceInterface
                 'trashed_status' => 'sometimes|integer|in:-1,0,1',
                 'is_all' => 'sometimes|boolean',
                 'search' => 'sometimes|string',
-                'updated_at' => 'sometimes|date',
+                'updated_at' => 'sometimes',
             ], $rules);
             if ($this->getIsPaginated()) {
                 return array_merge([
