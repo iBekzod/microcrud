@@ -10,14 +10,11 @@
     ],
     "require": {
         "php": ">=7.4.0",
-        "aws/aws-sdk-php": "^3.166.2",
         "guzzlehttp/guzzle": "^7.2|^6.5.5|^7.4.1",
         "illuminate/database": "^8.83.3|^9.0|^10.0",
         "illuminate/filesystem": "^8.83.3|^9.0|^10.0",
         "illuminate/support": "^8.83.3|^9.0|^10.0",
-        "laravel/tinker": "^2.7",
-        "league/flysystem-aws-s3-v3": "^1.0.29|^2.1.0|^3.0",
-        "sentry/sentry-laravel": "^3.2"
+        "league/flysystem-aws-s3-v3": "^1.0.29|^2.1.0|^3.0"
     },
     "require-dev": {
         "orchestra/testbench": "^6.6|^7.0|^8.0",
