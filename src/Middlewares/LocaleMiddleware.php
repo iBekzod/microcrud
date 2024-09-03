@@ -14,7 +14,7 @@ class LocaleMiddleware
         if ($acceptLanguages = $request->header('Accept-Language')) {
             $lang = null;
             foreach ($locales as $locale) {
-                if (str_contains($acceptLanguages, $locale)) {
+                if (preg_match("/\b" . preg_quote($locale, '/') . "\b/i", $acceptLanguages)) {
                     $lang = $locale;
                     break;
                 }
