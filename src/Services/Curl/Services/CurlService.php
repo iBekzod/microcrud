@@ -143,13 +143,9 @@ class CurlService
 
     public function getUrl($key, $replacements = [])
     {
-        $base_car_info_url = env('BASE_CAR_INFO_URL', '');
-        $base_ocpp_url = env('OCPP_SERVICE_URL', '');
-        $payme_url = env('PAYME_SUBSCRIBE_URL', '');
+        $base_url = env('BASE_URL', '');
         $urls = [
-            'car_info' => $base_car_info_url,
-            'ocpp-start-charging' => $base_ocpp_url . 'charging-station/:id/remote-start-transaction',
-            'payme-subscribe' => $payme_url,
+            'base_url' => $base_url,
         ];
         if (!array_key_exists($key, $urls)) {
             throw new \Exception("Url key not found!");

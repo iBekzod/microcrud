@@ -39,18 +39,8 @@ class ItemResource extends JsonResource
                 $this->resource->{$method}() instanceof \Illuminate\Database\Eloquent\Relations\Relation
             ) {
                 unset($attributes[$key . '_id']);
-                switch ($key) {
-                    case 'upload':
-                        $attributes[$key] = new UploadResource($this->{$method});
-                        break;
-                    case 'user':
-                        $attributes[$key] = new UserResource($this->{$method});
-                        break;
-                    default:
-                        $attributes[$key] = new ItemResource($this->{$method});
-                }
+                $attributes[$key] = new ItemResource($this->{$method});
             }
-
             switch ($key) {
                 case 'created_at':
                 case 'updated_at':

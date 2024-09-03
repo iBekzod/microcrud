@@ -38,8 +38,8 @@ class StoreJob implements ShouldQueue, ShouldBeUnique
         $this->service->create($this->data);
     }
 
-    // public function failed(\Exception $e)
-    // {
-    //     \Illuminate\Support\Facades\Log::debug('MyNotification failed');
-    // }
+    public function failed(\Exception $e)
+    {
+        \Illuminate\Support\Facades\Log::debug('Background exception: '.$e->getMessage());
+    }
 }
