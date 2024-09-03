@@ -14,14 +14,6 @@
         "illuminate/filesystem": "~5.2.0|^6.0|^7.0|^8.0|^9.0|^10.0",
         "illuminate/support":    "~5.2.0|^6.0|^7.0|^8.0|^9.0|^10.0"
     },
-    "require-dev": {
-        "phpunit/phpunit": "^9.5.13",
-        "mockery/mockery": "^1.4.2",
-        "vlucas/phpdotenv": "^4.2.2|^5.4.1",
-        "php-coveralls/php-coveralls": "^2.5.2",
-        "laravel/legacy-factories": "^1.3.0",
-        "doctrine/dbal": "^2.11|^3.0"
-    },
     "license": "MIT",
     "autoload": {
         "psr-4": {
