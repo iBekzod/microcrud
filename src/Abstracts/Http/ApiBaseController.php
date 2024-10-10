@@ -12,7 +12,7 @@ use Microcrud\Interfaces\ApiController;
 abstract class ApiBaseController implements ApiController
 {
 
-    protected Service $service;
+    protected $service;
     /**
      * Class constructor.
      */
