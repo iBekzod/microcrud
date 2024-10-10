@@ -100,13 +100,9 @@ abstract class ApiBaseController implements ApiController
         } else {
             Log::error('MESSAGE: ' . $message);
         }
-        if (Lang::has('microcrud_translations::errors.' . $message) || Lang::has('microcrud_translations::errors.' . $message)) {
-            return response()->json([
-                'message'   => $this->translate('errors.' . $message),
-            ], $status_code);
-        }
+        
         return response()->json([
-            'message'   => $message,
+            'message'   => $this->translate($message),
         ], $status_code);
     }
 
@@ -132,7 +128,13 @@ abstract class ApiBaseController implements ApiController
 
     public function translate(String $key)
     {
-        return trans('microcrud_translations::' . $key);
+        if (Lang::has('microcrud_translations::validation.' . $key)) {
+            return trans('microcrud_translations::validation.' . $key);
+        }else if(Lang::has('validation.' . $key)){
+            return trans('validation.' . $key);
+        }else{
+            return __($key);
+        }
     }
 
     public function get($data, $status_code = 200)
