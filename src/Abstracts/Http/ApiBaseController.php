@@ -95,19 +95,23 @@ abstract class ApiBaseController implements ApiController
 
     public function error($message, $status_code = 400, $exception = null)
     {
+        $result = [
+            'message' => $message,
+        ];
         if ($exception) {
+            if(env('APP_DEBUG', false)){
+                $result['error'] = $exception->getTraceAsString();
+            }
             Log::error('MESSAGE: ' . $message . ' ERROR: ' . $exception->getMessage() . ' TRACE: ' . $exception->getTraceAsString());
         } else {
             Log::error('MESSAGE: ' . $message);
         }
         if (Lang::has('microcrud_translations::errors.' . $message) || Lang::has('microcrud_translations::errors.' . $message)) {
-            return response()->json([
-                'message'   => $this->translate('errors.' . $message),
-            ], $status_code);
+            $result['message'] = $this->translate('errors.' . $message);
+        }else if (Lang::has('microcrud_translations::validation.' . $message) || Lang::has('microcrud_translations::validation.' . $message)) {
+            $result['message'] = $this->translate('validation.' . $message);
         }
-        return response()->json([
-            'message'   => $message,
-        ], $status_code);
+        return response()->json($result, $status_code);
     }
 
     public function errorNotFound($message = 'Not Found', $exception = null)
