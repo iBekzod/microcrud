@@ -12,7 +12,7 @@ use Microcrud\Interfaces\ApiController;
 abstract class ApiBaseController implements ApiController
 {
 
-    protected Service $service;
+    protected $service;
     /**
      * Class constructor.
      */
@@ -106,11 +106,6 @@ abstract class ApiBaseController implements ApiController
         } else {
             Log::error('MESSAGE: ' . $message);
         }
-        if (Lang::has('microcrud_translations::errors.' . $message) || Lang::has('microcrud_translations::errors.' . $message)) {
-            $result['message'] = $this->translate('errors.' . $message);
-        }else if (Lang::has('microcrud_translations::validation.' . $message) || Lang::has('microcrud_translations::validation.' . $message)) {
-            $result['message'] = $this->translate('validation.' . $message);
-        }
         return response()->json($result, $status_code);
     }
 
@@ -136,7 +131,13 @@ abstract class ApiBaseController implements ApiController
 
     public function translate(String $key)
     {
-        return trans('microcrud_translations::' . $key);
+        if (Lang::has('microcrud_translations::validation.' . $key)) {
+            return trans('microcrud_translations::validation.' . $key);
+        }else if(Lang::has('validation.' . $key)){
+            return trans('validation.' . $key);
+        }else{
+            return __($key);
+        }
     }
 
     public function get($data, $status_code = 200)

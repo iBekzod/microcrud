@@ -22,7 +22,7 @@ use Microcrud\Abstracts\Exceptions\ValidationException;
 abstract class Service implements ServiceInterface
 {
     public $model;
-    protected array $data = [];
+    protected $data = [];
     protected $private_key_name = 'id';
 
     protected $is_job = false;
@@ -35,7 +35,7 @@ abstract class Service implements ServiceInterface
     protected $cache_expires_at = null;
     protected $is_replace_rules = false;
 
-    protected array $rules = [];
+    protected $rules = [];
     protected $items = [];
     /**
      * Class constructor.
@@ -194,7 +194,7 @@ abstract class Service implements ServiceInterface
     /**
      * @throws NotFoundException
      */
-    public function setData(array $data)
+    public function setData($data)
     {
         if (isset($data)) {
             Log::info("Set data:");
@@ -266,7 +266,7 @@ abstract class Service implements ServiceInterface
         return $data;
     }
 
-    public function withoutScopes(array $scopes = [])
+    public function withoutScopes($scopes = [])
     {
         $new_query = $this->getQuery();
         if (count($scopes) > 0) {
@@ -412,7 +412,7 @@ abstract class Service implements ServiceInterface
             if ($this->is_job) {
                 Log::error($message);
             } else {
-                throw new CreateException($message);
+                throw new CreateException($exception->getMessage(), $exception->getCode(), $exception);
             }
         }
         if ($this->getIsTransactionEnabled() || $this->is_job)
@@ -464,7 +464,7 @@ abstract class Service implements ServiceInterface
             if ($this->is_job) {
                 Log::error($message);
             } else {
-                throw new UpdateException($message);
+                throw new UpdateException($exception->getMessage(), $exception->getCode(), $exception);
             }
         }
         if ($this->getIsTransactionEnabled() || $this->is_job)

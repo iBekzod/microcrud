@@ -8,7 +8,7 @@ use Illuminate\Database\Eloquent\Model as Eloquent;
 abstract class Model extends Eloquent
 {
     use HasFactory;
-    static array $scopes = [];
+    static $scopes = [];
 
     protected static function boot()
     {

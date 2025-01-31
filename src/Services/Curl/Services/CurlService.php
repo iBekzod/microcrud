@@ -19,15 +19,29 @@ class CurlService
 
     const GET = 'GET';
     const POST = 'POST';
+    const PATCH = 'PATCH';
+    const DELETE = 'DELETE';
+    const PUT = 'PUT';
 
     public function get($url)
     {
         return $this->invokeHttpRequest(self::GET, $url);
     }
-
     public function post($url)
     {
         return $this->invokeHttpRequest(self::POST, $url);
+    }
+    public function patch($url)
+    {
+        return $this->invokeHttpRequest(self::PATCH, $url);
+    }
+    public function delete($url)
+    {
+        return $this->invokeHttpRequest(self::DELETE, $url);
+    }
+    public function put($url)
+    {
+        return $this->invokeHttpRequest(self::PUT, $url);
     }
 
     protected function invokeHttpRequest($type, $url)
@@ -38,32 +52,47 @@ class CurlService
             return $this->invokeCurlRequest($type, $url);
         }
     }
-    protected function invokeCurlRequest($type, $url)
+    protected function invokeCurlRequest($method, $url)
     {
-        $ch = curl_init();
-        if (!empty($this->params)) {
-            if ($type == self::POST) {
-                $postData = json_encode($this->params);
-                curl_setopt($ch, CURLOPT_POST, 1);
-                curl_setopt($ch, CURLOPT_POSTFIELDS, $postData);
-                curl_setopt($ch, CURLOPT_HTTPHEADER, [
+        $curl = curl_init();
+        $data = $this->params;
+        $headers = $this->headers;
+        if ($method == self::POST) {
+            curl_setopt($curl, CURLOPT_POST, true);
+            if (!empty($data)) {
+                curl_setopt($curl, CURLOPT_POSTFIELDS, http_build_query($data));
+                curl_setopt($curl, CURLOPT_HTTPHEADER, [
                     'Content-Type: application/json',
-                    'Content-Length: ' . strlen($postData)
+                    'Content-Length: ' . strlen(json_encode($data))
                 ]);
-            } else {
-                $url = $url . '?' . http_build_query($this->params);
+            }
+        } else if (in_array($method, [self::GET, self::PATCH, self::DELETE, self::PUT])) {
+            curl_setopt($curl, CURLOPT_CUSTOMREQUEST, $method);
+            if (!empty($data)) {
+                if($method == self::GET){
+                    $url = $url . '?' . http_build_query($data);
+                }else{
+                    curl_setopt($curl, CURLOPT_POSTFIELDS, http_build_query($data));
+                }
+            }
+        } else {
+            throw new \Exception('Invalid method');
+        }
+        if (empty($headers)) {
+            $headers = [
+                'Content-Type: application/json'
+            ];
+            if (!empty($data)) {
+                $headers[] = 'Content-Length: ' . strlen(json_encode($data));
             }
         }
-        curl_setopt($ch, CURLOPT_URL, $url);
-        if (!empty($this->headers)) {
-            curl_setopt($ch, CURLOPT_HTTPHEADER, $this->headers);
-        }
-        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-
-        $response = curl_exec($ch);
-        $err = curl_error($ch);
-        $statusCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        curl_close($ch);
+        curl_setopt($curl, CURLOPT_URL, $url);
+        curl_setopt($curl, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($curl, CURLOPT_HTTPHEADER, $headers);
+        $response = curl_exec($curl);
+        $err = curl_error($curl);
+        $statusCode = curl_getinfo($curl, CURLINFO_HTTP_CODE);
+        curl_close($curl);
         if ($err) {
             throw new CurlException("cURL Error: {$err}", $statusCode);
         }
