@@ -36,7 +36,7 @@ abstract class Service implements ServiceInterface
     protected $is_replace_rules = false;
 
     protected $rules = [];
-    protected $items = [];
+    protected $items;
     /**
      * Class constructor.
      */
