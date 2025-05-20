@@ -36,6 +36,7 @@ abstract class Service implements ServiceInterface
     protected $is_replace_rules = false;
 
     protected $rules = [];
+    protected $extra_data = [];
     protected $items;
     /**
      * Class constructor.
@@ -65,6 +66,17 @@ abstract class Service implements ServiceInterface
     public function setIsCacheable($is_cacheable = true)
     {
         $this->is_cacheable = $is_cacheable;
+        return $this;
+    }
+
+    public function getExtraData()
+    {
+        return $this->extra_data;
+    }
+
+    public function setExtraData($extra_data = [])
+    {
+        $this->extra_data = $extra_data;
         return $this;
     }
 

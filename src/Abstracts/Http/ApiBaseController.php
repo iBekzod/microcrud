@@ -44,7 +44,8 @@ abstract class ApiBaseController implements ApiController
             $resource = $this->service->getItemResource();
         }
         return response()->json([
-            "data" => new $resource($item)
+            "data" => new $resource($item),
+            'extra_data' => $this->service->getExtraData(),
         ], $status_code);
     }
 
@@ -62,7 +63,8 @@ abstract class ApiBaseController implements ApiController
                 'totalPage' => $items->lastPage(),
                 'totalItem' => $items->total(),
             ],
-            'data' => $resource::collection($items->items())
+            'data' => $resource::collection($items->items()),
+            'extra_data' => $this->service->getExtraData(),
         ], $status_code);
     }
 
@@ -143,7 +145,8 @@ abstract class ApiBaseController implements ApiController
     public function get($data, $status_code = 200)
     {
         return response()->json([
-            'data' => $data
+            'data' => $data,
+            'extra_data' => $this->service->getExtraData(),
         ], $status_code);
     }
     public function getResource($resource = null, $items = null, $status_code = 200)
