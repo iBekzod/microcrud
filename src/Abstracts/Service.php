@@ -424,7 +424,7 @@ abstract class Service implements ServiceInterface
             if ($this->is_job) {
                 Log::error($message);
             } else {
-                throw new CreateException($exception->getMessage(), $exception->getCode(), $exception);
+                throw new CreateException($exception->getMessage(), (is_int($exception->getCode()))?$exception->getCode():400, $exception);
             }
         }
         if ($this->getIsTransactionEnabled() || $this->is_job)
@@ -476,7 +476,7 @@ abstract class Service implements ServiceInterface
             if ($this->is_job) {
                 Log::error($message);
             } else {
-                throw new UpdateException($exception->getMessage(), $exception->getCode(), $exception);
+                throw new UpdateException($exception->getMessage(), (is_int($exception->getCode()))?$exception->getCode():400, $exception);
             }
         }
         if ($this->getIsTransactionEnabled() || $this->is_job)
