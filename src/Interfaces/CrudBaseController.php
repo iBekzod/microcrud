@@ -58,10 +58,10 @@ interface CrudBaseController
     public function restore(Request $request);
 
     /**
-     * Force delete a resource.
+     * Bulk action for resources.
      * Override in child controller to use a custom FormRequest.
      * @param Request $request
      * @return \Illuminate\Http\JsonResponse
      */
-    public function forceDelete(Request $request);
+    public function bulkAction(Request $request);
 }
