@@ -339,27 +339,27 @@ abstract class Service implements ServiceInterface
     }
 
     public function getPaginated($modelQuery = null, $modelTableName = null, $is_cacheable = false)
-    {   
+    {
         $data = request()->all();
-        if(!isset(request()->page)){
+        if (!isset(request()->page)) {
             request()->merge([
-                'page'=> 1
+                'page' => 1
             ]);
         }
-        if(!isset(request()->limit)){
+        if (!isset(request()->limit)) {
             request()->merge([
-                'limit'=> 10
+                'limit' => 10
             ]);
         }
-        if(!$modelQuery){
+        if (!$modelQuery) {
             $modelQuery = $this->getQuery();
         }
 
-        if(!$modelTableName){
+        if (!$modelTableName) {
             $modelTableName = $this->getModelTableName();
         }
         $limit = request()->limit ?? 10;
-        if($this->getIsCacheable()){
+        if ($this->getIsCacheable()) {
             ksort($data);
             $item_key = request()->path() . ":" . $modelTableName . ":" . serialize($data);
             $items = Cache::tags([$modelTableName])
@@ -370,7 +370,7 @@ abstract class Service implements ServiceInterface
                         return $modelQuery->paginate($limit);
                     }
                 );
-        }else{
+        } else {
             $items =  $modelQuery->paginate($limit);
         }
         $this->setItems($items)->afterIndex();
@@ -424,7 +424,7 @@ abstract class Service implements ServiceInterface
             if ($this->is_job) {
                 Log::error($message);
             } else {
-                throw new CreateException($exception->getMessage(), (is_int($exception->getCode()))?$exception->getCode():400, $exception);
+                throw new CreateException($exception->getMessage(), (is_int($exception->getCode())) ? $exception->getCode() : 400, $exception);
             }
         }
         if ($this->getIsTransactionEnabled() || $this->is_job)
@@ -440,19 +440,20 @@ abstract class Service implements ServiceInterface
         return $this;
     }
 
-    public function composeItems(array $data = []){
+    public function composeItems(array $data = [])
+    {
         if (empty($data)) {
             $data = $this->getData();
         }
         $new_items = [];
         $values = $data;
-        if(array_key_exists('items', $data)) {
+        if (array_key_exists('items', $data)) {
             $items = $values['items'];
             unset($values['items']);
-            foreach($items as $item) {
+            foreach ($items as $item) {
                 $new_items[] = array_merge($values, $item);
             }
-        }else{
+        } else {
             $new_items[] = $values;
         }
         return $new_items;
@@ -494,7 +495,7 @@ abstract class Service implements ServiceInterface
             if ($this->is_job) {
                 Log::error($message);
             } else {
-                throw new UpdateException($exception->getMessage(), (is_int($exception->getCode()))?$exception->getCode():400, $exception);
+                throw new UpdateException($exception->getMessage(), (is_int($exception->getCode())) ? $exception->getCode() : 400, $exception);
             }
         }
         if ($this->getIsTransactionEnabled() || $this->is_job)
@@ -517,9 +518,25 @@ abstract class Service implements ServiceInterface
     public function bulkActionJob($data = [])
     {
         $items = $this->composeItems();
-        foreach($items as $item) {
-            $this->updateJob($item);
+        if (isset($data["bulk_action"]) && in_array($data["bulk_action"], ['create', 'update'])) {
+            switch ($data["bulk_action"]) {
+                case 'create':
+                    foreach ($items as $item) {
+                        $this->createJob($item);
+                    }
+                    break;
+                case 'update':
+                    foreach ($items as $item) {
+                        $this->updateJob($item);
+                    }
+                    break;
+                default:
+                    break;
+            }
+        } else {
+            throw new ValidationException("bulk_action parameter required with one of values:update or create for job!");
         }
+
         return $this;
     }
     /**
@@ -537,16 +554,37 @@ abstract class Service implements ServiceInterface
             $total_count = 1;
             $success_count = 0;
             $items = $this->composeItems();
-            $updated_items = collect([]);
-            foreach($items as $item) {
-                $model = $this->update($item)->get();
-                $updated_items->push($model);
+            $changed_items = collect();
+            foreach ($items as $item) {
+                $this->setData($item);
+                switch ($data["bulk_action"]) {
+                    case 'create':
+                        $this->create();
+                        break;
+                    case 'update':
+                        $this->setById()->update();
+                        break;
+                    case 'show':
+                        $this->beforeShow()->setById()->afterShow();
+                        break;
+                    case 'delete':
+                        $this->setById()->delete();
+                        break;
+                    case 'restore':
+                        $this->setById()->restore();
+                        break;
+                    default:
+                        break;
+                }
+                $model = $this->get();
+                $changed_items->push($model);
                 $success_count++;
             }
-            $this->setItems($updated_items);
+            $this->setData($data);
+            $this->setItems($changed_items);
             $this->setExtraData(array_merge($this->getExtraData(), [
-                'total_count'=>$total_count,
-                'success_count'=>$success_count,
+                'total_count' => $total_count,
+                'success_count' => $success_count,
             ]));
         } catch (\Exception $exception) {
             if ($this->getIsTransactionEnabled())
@@ -555,7 +593,7 @@ abstract class Service implements ServiceInterface
             if ($this->is_job) {
                 Log::error($message);
             } else {
-                throw new \Exception($exception->getMessage(), (is_int($exception->getCode()))?$exception->getCode():400, $exception);
+                throw new \Exception($exception->getMessage(), (is_int($exception->getCode())) ? $exception->getCode() : 400, $exception);
             }
         }
         if ($this->getIsTransactionEnabled() || $this->is_job)
@@ -575,8 +613,8 @@ abstract class Service implements ServiceInterface
         if (empty($data)) {
             $data = $this->getData();
         }
-        if(count($conditions)){
-            if ($model = $this->getQuery()->where($conditions)->first()){
+        if (count($conditions)) {
+            if ($model = $this->getQuery()->where($conditions)->first()) {
                 $this->set($model)->update($data);
                 return $this;
             }
@@ -718,15 +756,15 @@ abstract class Service implements ServiceInterface
         }
     }
 
-    public function bulkActionRules($rules = [], $replace = false) 
+    public function bulkActionRules($rules = [], $replace = false)
     {
         if ($replace) {
             return $rules;
         }
         $action = '';
-        if(request()->has('bulk_action') && in_array(request()->bulk_action, ['create','update', 'delete', 'restore', 'show'])) {
-           $action =  request()->bulk_action;
-        }else{
+        if (request()->has('bulk_action') && in_array(request()->bulk_action, ['create', 'update', 'delete', 'restore', 'show'])) {
+            $action =  request()->bulk_action;
+        } else {
             throw new ValidationException('bulk_action parameter must be one of theese actions: create, update, show, delete, restore', 422);
         }
         $action_rules = [];
@@ -746,26 +784,26 @@ abstract class Service implements ServiceInterface
             case 'restore':
                 $action_rules = $this->restoreRules();
                 break;
-            default:                
+            default:
                 break;
         }
         $bulk_rules = [
-            'bulk_action'=>'sometimes|in:create,update,delete,restore,show',
+            'bulk_action' => 'sometimes|in:create,update,delete,restore,show',
             'items' => 'sometimes|array',
         ];
         foreach ($action_rules as $field => $rule_string) {
             $is_array = false;
-            if(is_array($rule_string)) {
+            if (is_array($rule_string)) {
                 $is_array = true;
                 $rules_array = $rule_string;
             } else {
                 $rules_array = explode('|', $rule_string);
-            }            
+            }
             $has_required = in_array('required', $rules_array);
-            $other_rules = array_filter($rules_array, function($rule) {
+            $other_rules = array_filter($rules_array, function ($rule) {
                 return !in_array($rule, ['required', 'sometimes']);
             });
-            $is_primary_key = ($field === $this->getPrivateKeyName());            
+            $is_primary_key = ($field === $this->getPrivateKeyName());
             if ($is_primary_key) {
                 if ($is_array) {
                     $bulk_rules["items.*.$field"] = array_merge(["required"], $other_rules);
@@ -792,8 +830,8 @@ abstract class Service implements ServiceInterface
                         $bulk_rules["items.*.$field"] = "sometimes" . $other_rules_string;
                     }
                 }
-            }   
-        }        
+            }
+        }
         return array_merge($bulk_rules, $rules);
     }
     public function deleteRules($rules = [], $replace = false)
