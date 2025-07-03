@@ -776,7 +776,7 @@ abstract class Service implements ServiceInterface
             } else {
                 if ($is_array) {
                     if ($has_required) {
-                        $bulk_rules[$field] = array_merge(["required_without:items.*.$field"], $other_rules);
+                        $bulk_rules[$field] = array_merge(["sometimes"], $other_rules);
                         $bulk_rules["items.*.$field"] = array_merge(["required_without:$field"], $other_rules);
                     } else {
                         $bulk_rules[$field] = array_merge(["sometimes"], $other_rules);
@@ -785,7 +785,7 @@ abstract class Service implements ServiceInterface
                 } else {
                     $other_rules_string = !empty($other_rules) ? '|' . implode('|', $other_rules) : '';
                     if ($has_required) {
-                        $bulk_rules[$field] = "required_without:items.*.$field" . $other_rules_string;
+                        $bulk_rules[$field] = "sometimes" . $other_rules_string;
                         $bulk_rules["items.*.$field"] = "required_without:$field" . $other_rules_string;
                     } else {
                         $bulk_rules[$field] = "sometimes" . $other_rules_string;
