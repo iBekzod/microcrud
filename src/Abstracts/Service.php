@@ -439,6 +439,24 @@ abstract class Service implements ServiceInterface
         }
         return $this;
     }
+
+    public function composeItems(array $data = []){
+        if (empty($data)) {
+            $data = $this->getData();
+        }
+        $new_items = [];
+        $values = $data;
+        if(array_key_exists('items', $data)) {
+            $items = $values['items'];
+            unset($values['items']);
+            foreach($items as $item) {
+                $new_items[] = array_merge($values, $item);
+            }
+        }else{
+            $new_items[] = $values;
+        }
+        return $new_items;
+    }
     public function beforeUpdate()
     {
         return $this;
@@ -485,6 +503,67 @@ abstract class Service implements ServiceInterface
         return $this;
     }
     public function afterUpdate()
+    {
+        if ($this->getIsCacheable()) {
+            Cache::tags($this->getModelTableName())->flush();
+        }
+        return $this;
+    }
+
+    public function beforeBulkAction()
+    {
+        return $this;
+    }
+    public function bulkActionJob($data = [])
+    {
+        $items = $this->composeItems();
+        foreach($items as $item) {
+            $this->updateJob($item);
+        }
+        return $this;
+    }
+    /**
+     * @throws \Exception
+     */
+    public function bulkAction($data = [])
+    {
+        if ($this->getIsTransactionEnabled())
+            DB::beginTransaction();
+        try {
+            if (!empty($data)) {
+                $this->setData($data);
+            }
+            $this->beforeBulkAction();
+            $total_count = 1;
+            $success_count = 0;
+            $items = $this->composeItems();
+            $updated_items = collect([]);
+            foreach($items as $item) {
+                $model = $this->update($item)->get();
+                $updated_items->push($model);
+                $success_count++;
+            }
+            $this->setItems($updated_items);
+            $this->setExtraData(array_merge($this->getExtraData(), [
+                'total_count'=>$total_count,
+                'success_count'=>$success_count,
+            ]));
+        } catch (\Exception $exception) {
+            if ($this->getIsTransactionEnabled())
+                DB::rollBack();
+            $message = "Cannot update. ERROR:{$exception->getMessage()}. TRACE: {$exception->getTraceAsString()}";
+            if ($this->is_job) {
+                Log::error($message);
+            } else {
+                throw new \Exception($exception->getMessage(), (is_int($exception->getCode()))?$exception->getCode():400, $exception);
+            }
+        }
+        if ($this->getIsTransactionEnabled() || $this->is_job)
+            DB::commit();
+        $this->afterBulkAction();
+        return $this;
+    }
+    public function afterBulkAction()
     {
         if ($this->getIsCacheable()) {
             Cache::tags($this->getModelTableName())->flush();
@@ -637,6 +716,85 @@ abstract class Service implements ServiceInterface
             $model_rules['is_job'] = 'sometimes|boolean';
             return array_merge($model_rules, $rules);
         }
+    }
+
+    public function bulkActionRules($rules = [], $replace = false) 
+    {
+        if ($replace) {
+            return $rules;
+        }
+        $action = '';
+        if(request()->has('bulk_action') && in_array(request()->bulk_action, ['create','update', 'delete', 'restore', 'show'])) {
+           $action =  request()->bulk_action;
+        }else{
+            throw new ValidationException('bulk_action parameter must be one of theese actions: create, update, show, delete, restore', 422);
+        }
+        $action_rules = [];
+        switch ($action) {
+            case 'create':
+                $action_rules = $this->createRules();
+                break;
+            case 'update':
+                $action_rules = $this->updateRules();
+                break;
+            case 'show':
+                $action_rules = $this->updateRules();
+                break;
+            case 'delete':
+                $action_rules = $this->deleteRules();
+                break;
+            case 'restore':
+                $action_rules = $this->restoreRules();
+                break;
+            default:                
+                break;
+        }
+        $bulk_rules = [
+            'bulk_action'=>'sometimes|in:create,update,delete,restore,show',
+            'items' => 'sometimes|array',
+        ];
+        foreach ($action_rules as $field => $rule_string) {
+            $is_array = false;
+            if(is_array($rule_string)) {
+                $is_array = true;
+                $rules_array = $rule_string;
+            } else {
+                $rules_array = explode('|', $rule_string);
+            }            
+            $has_required = in_array('required', $rules_array);
+            $other_rules = array_filter($rules_array, function($rule) {
+                return !in_array($rule, ['required', 'sometimes']);
+            });
+            $is_primary_key = ($field === $this->getPrivateKeyName());            
+            if ($is_primary_key) {
+                if ($is_array) {
+                    $bulk_rules["items.*.$field"] = array_merge(["required"], $other_rules);
+                } else {
+                    $other_rules_string = !empty($other_rules) ? '|' . implode('|', $other_rules) : '';
+                    $bulk_rules["items.*.$field"] = "required" . $other_rules_string;
+                }
+            } else {
+                if ($is_array) {
+                    if ($has_required) {
+                        $bulk_rules[$field] = array_merge(["required_without:items.*.$field"], $other_rules);
+                        $bulk_rules["items.*.$field"] = array_merge(["required_without:$field"], $other_rules);
+                    } else {
+                        $bulk_rules[$field] = array_merge(["sometimes"], $other_rules);
+                        $bulk_rules["items.*.$field"] = array_merge(["sometimes"], $other_rules);
+                    }
+                } else {
+                    $other_rules_string = !empty($other_rules) ? '|' . implode('|', $other_rules) : '';
+                    if ($has_required) {
+                        $bulk_rules[$field] = "required_without:items.*.$field" . $other_rules_string;
+                        $bulk_rules["items.*.$field"] = "required_without:$field" . $other_rules_string;
+                    } else {
+                        $bulk_rules[$field] = "sometimes" . $other_rules_string;
+                        $bulk_rules["items.*.$field"] = "sometimes" . $other_rules_string;
+                    }
+                }
+            }   
+        }        
+        return array_merge($bulk_rules, $rules);
     }
     public function deleteRules($rules = [], $replace = false)
     {

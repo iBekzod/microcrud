@@ -21,7 +21,7 @@ abstract class CrudController extends ApiBaseController implements CrudBaseContr
     public function index(Request $request)
     {
         try {
-            $data = $this->service->globalValidation($request->all(), $this->service->indexRules());
+            $data = method_exists($request, 'validated') ? $request->validated() : $this->service->globalValidation($request->all(), $this->service->indexRules());
             $itemsQuery = $this->service
                 ->setData($data)
                 ->beforeIndex()
@@ -60,7 +60,7 @@ abstract class CrudController extends ApiBaseController implements CrudBaseContr
     public function show(Request $request)
     {
         try {
-            $data = $this->service->globalValidation($request->all(), $this->service->showRules());
+            $data = method_exists($request, 'validated') ? $request->validated() : $this->service->globalValidation($request->all(), $this->service->showRules());
             $item = $this->service
                 ->setData($data)
                 ->beforeShow()
@@ -89,7 +89,7 @@ abstract class CrudController extends ApiBaseController implements CrudBaseContr
         if (!$this->service->getIsTransactionEnabled())
             DB::beginTransaction();
         try {
-            $data = $this->service->globalValidation($request->all(), $this->service->createRules());
+            $data = method_exists($request, 'validated') ? $request->validated() : $this->service->globalValidation($request->all(), $this->service->createRules());
             if (array_key_exists('is_job', $data) && $data['is_job']) {
                 $this->service
                     ->setData($data)
@@ -131,7 +131,7 @@ abstract class CrudController extends ApiBaseController implements CrudBaseContr
         if (!$this->service->getIsTransactionEnabled())
             DB::beginTransaction();
         try {
-            $data = $this->service->globalValidation($request->all(), $this->service->updateRules());
+            $data = method_exists($request, 'validated') ? $request->validated() : $this->service->globalValidation($request->all(), $this->service->updateRules());
             if (array_key_exists('is_job', $data) && $data['is_job']) {
                 $this->service
                     ->setData($data)
@@ -179,7 +179,7 @@ abstract class CrudController extends ApiBaseController implements CrudBaseContr
         if (!$this->service->getIsTransactionEnabled())
             DB::beginTransaction();
         try {
-            $data = $this->service->globalValidation($request->all(), $this->service->deleteRules());
+            $data = method_exists($request, 'validated') ? $request->validated() : $this->service->globalValidation($request->all(), $this->service->deleteRules());
             if ($request->is_force_destroy) {
                 $this->service
                     ->setQuery($this->service->getQuery()->withTrashed());
@@ -218,7 +218,7 @@ abstract class CrudController extends ApiBaseController implements CrudBaseContr
         if (!$this->service->getIsTransactionEnabled())
             DB::beginTransaction();
         try {
-            $data = $this->service->globalValidation($request->all(), $this->service->restoreRules());
+            $data = method_exists($request, 'validated') ? $request->validated() : $this->service->globalValidation($request->all(), $this->service->restoreRules());
             $item = $this->service
                 ->setQuery($this->service->getQuery()->withTrashed())
                 ->setData($data)
@@ -233,6 +233,14 @@ abstract class CrudController extends ApiBaseController implements CrudBaseContr
             if (!$this->service->getIsTransactionEnabled())
                 DB::rollBack();
             return $this->errorNotFound($th->getMessage(), $th);
+        } catch (CreateException $th) {
+            if (!$this->service->getIsTransactionEnabled())
+                DB::rollBack();
+            return $this->errorBadRequest($th->getMessage(), $th);
+        } catch (UpdateException $th) {
+            if (!$this->service->getIsTransactionEnabled())
+                DB::rollBack();
+            return $this->errorBadRequest($th->getMessage(), $th);
         } catch (\Exception $th) {
             if (!$this->service->getIsTransactionEnabled())
                 DB::rollBack();
@@ -241,5 +249,51 @@ abstract class CrudController extends ApiBaseController implements CrudBaseContr
         if (!$this->service->getIsTransactionEnabled())
             DB::commit();
         return $this->accepted($this->service->getItemResource(), $item);
+    }
+
+    /**
+     * Bulk store, update, show, remove, restore models.
+     *
+     * @param  \Illuminate\Http\Request  $request
+     *
+     */
+    public function bulkAction(Request $request)
+    {
+        $this->service->setIsTransactionEnabled(false);
+        if (!$this->service->getIsTransactionEnabled())
+            DB::beginTransaction();
+        try {
+            $data = method_exists($request, 'validated') ? $request->validated() : $this->service->globalValidation($request->all(), $this->service->bulkActionRules());
+            if (array_key_exists('is_job', $data) && $data['is_job']) {
+                $this->service
+                    ->setData($data)
+                    ->bulkActionJob();
+                return $this->success();
+            } else {
+                $this->service
+                    ->setData($data)
+                    ->bulkAction()
+                    ->get();
+            }
+        } catch (ValidationException $th) {
+            if (!$this->service->getIsTransactionEnabled())
+                DB::rollBack();
+            return $this->error($th->getMessage(), $th->getCode(), $th);
+        } catch (NotFoundException $th) {
+            if (!$this->service->getIsTransactionEnabled())
+                DB::rollBack();
+            return $this->errorNotFound($th->getMessage(), $th);
+        } catch (CreateException $th) {
+            if (!$this->service->getIsTransactionEnabled())
+                DB::rollBack();
+            return $this->errorBadRequest($th->getMessage(), $th);
+        } catch (\Exception $th) {
+            if (!$this->service->getIsTransactionEnabled())
+                DB::rollBack();
+            return $this->errorBadRequest($th->getMessage(), $th);
+        }
+        if (!$this->service->getIsTransactionEnabled())
+            DB::commit();
+        return $this->get($this->service->getItems());
     }
 }
