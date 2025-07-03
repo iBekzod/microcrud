@@ -557,24 +557,28 @@ abstract class Service implements ServiceInterface
             $changed_items = collect();
             foreach ($items as $item) {
                 $this->setData($item);
-                switch ($data["bulk_action"]) {
-                    case 'create':
-                        $this->create();
-                        break;
-                    case 'update':
-                        $this->setById()->update();
-                        break;
-                    case 'show':
-                        $this->beforeShow()->setById()->afterShow();
-                        break;
-                    case 'delete':
-                        $this->setById()->delete();
-                        break;
-                    case 'restore':
-                        $this->setById()->restore();
-                        break;
-                    default:
-                        break;
+                if (isset($item["bulk_action"]) && in_array($item["bulk_action"], ['create', 'update', 'show', 'delete', 'restore'])) {
+                    switch ($item["bulk_action"]) {
+                        case 'create':
+                            $this->create();
+                            break;
+                        case 'update':
+                            $this->setById()->update();
+                            break;
+                        case 'show':
+                            $this->beforeShow()->setById()->afterShow();
+                            break;
+                        case 'delete':
+                            $this->setById()->delete();
+                            break;
+                        case 'restore':
+                            $this->setById()->restore();
+                            break;
+                        default:
+                            break;
+                    }
+                }else{
+                    throw new ValidationException("bulk_action parameter required with one of values:update or create for job!");
                 }
                 $model = $this->get();
                 $changed_items->push($model);
@@ -776,7 +780,7 @@ abstract class Service implements ServiceInterface
                 $action_rules = $this->updateRules();
                 break;
             case 'show':
-                $action_rules = $this->updateRules();
+                $action_rules = $this->showRules();
                 break;
             case 'delete':
                 $action_rules = $this->deleteRules();
@@ -789,6 +793,7 @@ abstract class Service implements ServiceInterface
         }
         $bulk_rules = [
             'bulk_action' => 'sometimes|in:create,update,delete,restore,show',
+            'items.*.bulk_action' => 'sometimes|in:create,update,delete,restore,show',
             'items' => 'sometimes|array',
         ];
         foreach ($action_rules as $field => $rule_string) {
