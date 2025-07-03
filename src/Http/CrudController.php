@@ -294,6 +294,6 @@ abstract class CrudController extends ApiBaseController implements CrudBaseContr
         }
         if (!$this->service->getIsTransactionEnabled())
             DB::commit();
-        return $this->get($this->service->getItems());
+        return $this->getResource();
     }
 }

@@ -333,8 +333,11 @@ abstract class Service implements ServiceInterface
     }
     public function getAll()
     {
-        $items = $this->getQuery()->get();
-        $this->setItems($items)->afterIndex();
+        if(!$items = $this->getItems()) {
+            $items = $this->getQuery()->get();
+            $this->setItems($items);
+        }
+        $this->afterIndex();
         return $this->getItems();
     }
 
