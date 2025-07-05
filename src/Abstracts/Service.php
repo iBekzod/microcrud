@@ -567,28 +567,28 @@ abstract class Service implements ServiceInterface
                 if (isset($item["bulk_action"]) && in_array($item["bulk_action"], ['create', 'update', 'show', 'delete', 'restore'])) {
                     switch ($item["bulk_action"]) {
                         case 'create':
-                            $this->create();
+                            $model = $this->create()->get();
                             break;
                         case 'update':
-                            $this->setById()->update();
+                            $model = $this->setById()->update()->get();
                             break;
                         case 'show':
-                            $this->beforeShow()->setById()->afterShow();
+                            $model = $this->beforeShow()->setById()->afterShow()->get();
                             break;
                         case 'delete':
-                            $this->setById()->delete();
+                            $model = $this->setById()->get();
+                            $this->delete();
                             break;
                         case 'restore':
-                            $this->setById()->restore();
+                            $model = $this->setById()->restore()->get();
                             break;
                         default:
                             break;
-                    }
+                    }                    
+                    $changed_items->push($model);
                 }else{
                     throw new ValidationException("bulk_action parameter required with one of values:update or create for job!");
                 }
-                $model = $this->get();
-                $changed_items->push($model);
                 $success_count++;
             }
             $this->setData($data);
