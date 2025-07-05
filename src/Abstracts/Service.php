@@ -38,6 +38,7 @@ abstract class Service implements ServiceInterface
     protected $rules = [];
     protected $extra_data = [];
     protected $items;
+    protected static $columnTypesCache = [];
     /**
      * Class constructor.
      */
@@ -209,8 +210,7 @@ abstract class Service implements ServiceInterface
     public function setData($data)
     {
         if (isset($data)) {
-            Log::info("Set data:");
-            Log::info($data);
+            Log::info("Set data:", $data);
             $this->data = $data;
         } else {
             throw new NotFoundException();
@@ -324,6 +324,10 @@ abstract class Service implements ServiceInterface
     }
     public function beforeIndex()
     {
+        $data = $this->getData();
+        $query = $this->getQuery();
+        $query = $this->applyDynamicFilters($query, $data);
+        $this->setQuery($query);
         return $this;
     }
 
@@ -683,12 +687,48 @@ abstract class Service implements ServiceInterface
         if ($replace) {
             return $rules;
         } else {
-            $rules = array_merge([
+            $base_rules = [
                 'trashed_status' => 'sometimes|integer|in:-1,0,1',
                 'is_all' => 'sometimes|boolean',
                 'search' => 'sometimes|string',
                 'updated_at' => 'sometimes',
-            ], $rules);
+            ];
+            $model_columns = $this->getModelColumns();
+            foreach ($model_columns as $column) {
+                $base_rules["search_by_{$column}"] = 'sometimes|nullable';
+                $base_rules["order_by_{$column}"] = 'sometimes|in:asc,desc';
+            }
+            // $column_types = $this->getColumnTypes();
+            // foreach ($model_columns as $column) {
+            //     $column_type = $column_types[$column] ?? 'string';
+                
+            //     switch ($column_type) {
+            //         case 'integer':
+            //             $base_rules["search_by_{$column}"] = 'sometimes|integer';
+            //             $base_rules["search_by_{$column}_min"] = 'sometimes|integer';
+            //             $base_rules["search_by_{$column}_max"] = 'sometimes|integer';
+            //             break;
+            //         case 'numeric':
+            //             $base_rules["search_by_{$column}"] = 'sometimes|numeric';
+            //             $base_rules["search_by_{$column}_min"] = 'sometimes|numeric';
+            //             $base_rules["search_by_{$column}_max"] = 'sometimes|numeric';
+            //             break;
+            //         case 'date':
+            //             $base_rules["search_by_{$column}"] = 'sometimes|date';
+            //             $base_rules["search_by_{$column}_from"] = 'sometimes|date';
+            //             $base_rules["search_by_{$column}_to"] = 'sometimes|date';
+            //             break;
+            //         case 'boolean':
+            //             $base_rules["search_by_{$column}"] = 'sometimes|boolean';
+            //             break;
+            //         default:
+            //             $base_rules["search_by_{$column}"] = 'sometimes|string';
+            //             break;
+            //     }
+                
+            //     $base_rules["order_by_{$column}"] = 'sometimes|in:asc,desc';
+            // }
+            $rules = array_merge($base_rules, $rules);
             if ($this->getIsPaginated()) {
                 return array_merge([
                     'page' => 'sometimes|numeric|min:1',
@@ -877,4 +917,369 @@ abstract class Service implements ServiceInterface
             $key => "required|exists:{$schema}.{$tableName}," . $key
         ];
     }
+
+    public function getColumnTypes($model = null, $useCache = true)
+    {
+        if (!$model) {
+            $model = $this->model;
+        }
+        
+        $tableName = $this->getModelTableName($model);
+        $cacheKey = get_class($model) . '_' . $tableName . '_column_types';
+        
+        // Return cached version if available
+        if ($useCache && isset(self::$columnTypesCache[$cacheKey])) {
+            return self::$columnTypesCache[$cacheKey];
+        }
+        
+        // Use Laravel cache with tags (consistent with your service)
+        if ($this->getIsCacheable()) {
+            return Cache::tags([$tableName])
+                ->remember(
+                    $cacheKey,
+                    $this->getCacheExpiresAt(),
+                    function () use ($model, $cacheKey, $useCache) {
+                        $types = $this->fetchColumnTypesFromDatabase($model);
+                        
+                        // Also store in memory cache
+                        if ($useCache) {
+                            self::$columnTypesCache[$cacheKey] = $types;
+                        }
+                        
+                        return $types;
+                    }
+                );
+        }
+        
+        // Fallback to direct database query
+        $types = $this->fetchColumnTypesFromDatabase($model);
+        
+        if ($useCache) {
+            self::$columnTypesCache[$cacheKey] = $types;
+        }
+        
+        return $types;
+    }
+
+    private function fetchColumnTypesFromDatabase($model)
+    {
+        $connection = $model->getConnection();
+        $driver = $connection->getDriverName();
+        $tableName = $this->getModelTableName($model);
+        
+        try {
+            switch ($driver) {
+                case 'mysql':
+                    return $this->getMySQLColumnTypes($connection, $tableName);
+                case 'pgsql':
+                    return $this->getPostgreSQLColumnTypes($connection, $tableName);
+                case 'sqlite':
+                    return $this->getSQLiteColumnTypes($connection, $tableName);
+                case 'sqlsrv':
+                    return $this->getSQLServerColumnTypes($connection, $tableName);
+                default:
+                    return [];
+            }
+        } catch (\Exception $e) {
+            // Fallback: return basic string types for all columns
+            $columns = $this->getModelColumns($model);
+            return array_fill_keys($columns, 'string');
+        }
+    }
+
+    private function getMySQLColumnTypes($connection, $tableName)
+    {
+        $columns = $connection->select("DESCRIBE `{$tableName}`");
+        $types = [];
+        
+        foreach ($columns as $column) {
+            $types[$column->Field] = $this->parseColumnType($column->Type);
+        }
+        
+        return $types;
+    }
+
+    private function getPostgreSQLColumnTypes($connection, $tableName)
+    {
+        $columns = $connection->select("
+            SELECT column_name, data_type 
+            FROM information_schema.columns 
+            WHERE table_name = ? 
+            ORDER BY ordinal_position
+        ", [$tableName]);
+        
+        $types = [];
+        foreach ($columns as $column) {
+            $types[$column->column_name] = $this->parsePostgreSQLType($column->data_type);
+        }
+        
+        return $types;
+    }
+
+    private function getSQLiteColumnTypes($connection, $tableName)
+    {
+        $columns = $connection->select("PRAGMA table_info(`{$tableName}`)");
+        $types = [];
+        
+        foreach ($columns as $column) {
+            $types[$column->name] = $this->parseSQLiteType($column->type);
+        }
+        
+        return $types;
+    }
+
+    private function getSQLServerColumnTypes($connection, $tableName)
+    {
+        $databaseName = $connection->getDatabaseName();
+        $columns = $connection->select("
+            SELECT COLUMN_NAME, DATA_TYPE 
+            FROM INFORMATION_SCHEMA.COLUMNS 
+            WHERE TABLE_CATALOG = ? AND TABLE_NAME = ?
+            ORDER BY ORDINAL_POSITION
+        ", [$databaseName, $tableName]);
+        
+        $types = [];
+        foreach ($columns as $column) {
+            $types[$column->COLUMN_NAME] = $this->parseSQLServerType($column->DATA_TYPE);
+        }
+        
+        return $types;
+    }
+
+    private function parseColumnType($fullType)
+    {
+        $type = strtolower($fullType);
+        
+        if (strpos($type, 'int') !== false) return 'integer';
+        if (strpos($type, 'varchar') !== false) return 'string';
+        if (strpos($type, 'text') !== false) return 'string';
+        if (strpos($type, 'char') !== false) return 'string';
+        if (strpos($type, 'decimal') !== false) return 'numeric';
+        if (strpos($type, 'float') !== false) return 'numeric';
+        if (strpos($type, 'double') !== false) return 'numeric';
+        if (strpos($type, 'date') !== false) return 'date';
+        if (strpos($type, 'time') !== false) return 'date';
+        if (strpos($type, 'json') !== false) return 'json';
+        if (strpos($type, 'tinyint(1)') !== false) return 'boolean';
+        
+        return 'string';
+    }
+
+    private function parsePostgreSQLType($type)
+    {
+        $type = strtolower($type);
+        
+        if (in_array($type, ['integer', 'bigint', 'smallint'])) return 'integer';
+        if (in_array($type, ['character varying', 'varchar', 'text', 'char'])) return 'string';
+        if (in_array($type, ['decimal', 'numeric', 'real', 'double precision'])) return 'numeric';
+        if (in_array($type, ['date', 'timestamp', 'time'])) return 'date';
+        if ($type === 'boolean') return 'boolean';
+        if ($type === 'json' || $type === 'jsonb') return 'json';
+        
+        return 'string';
+    }
+
+    private function parseSQLiteType($type)
+    {
+        $type = strtolower($type);
+        
+        if (strpos($type, 'int') !== false) return 'integer';
+        if (strpos($type, 'text') !== false) return 'string';
+        if (strpos($type, 'varchar') !== false) return 'string';
+        if (strpos($type, 'char') !== false) return 'string';
+        if (strpos($type, 'real') !== false) return 'numeric';
+        if (strpos($type, 'float') !== false) return 'numeric';
+        if (strpos($type, 'decimal') !== false) return 'numeric';
+        if (strpos($type, 'date') !== false) return 'date';
+        if (strpos($type, 'time') !== false) return 'date';
+        if (strpos($type, 'boolean') !== false) return 'boolean';
+        
+        return 'string';
+    }
+
+    private function parseSQLServerType($type)
+    {
+        $type = strtolower($type);
+        
+        if (in_array($type, ['int', 'bigint', 'smallint', 'tinyint'])) return 'integer';
+        if (in_array($type, ['varchar', 'nvarchar', 'text', 'ntext', 'char'])) return 'string';
+        if (in_array($type, ['decimal', 'numeric', 'float', 'real', 'money'])) return 'numeric';
+        if (in_array($type, ['date', 'datetime', 'datetime2', 'time'])) return 'date';
+        if ($type === 'bit') return 'boolean';
+        
+        return 'string';
+    }
+
+    // Clear column types cache using tags (consistent with your afterCreate, afterUpdate, etc.)
+    public function clearColumnTypesCache($model = null)
+    {
+        if ($model) {
+            $tableName = $this->getModelTableName($model);
+            $cacheKey = get_class($model) . '_' . $tableName . '_column_types';
+            
+            // Clear memory cache
+            unset(self::$columnTypesCache[$cacheKey]);
+            
+            // Clear Laravel cache with tags
+            if ($this->getIsCacheable()) {
+                Cache::tags([$tableName])->flush();
+            }
+        } else {
+            // Clear all memory cache
+            self::$columnTypesCache = [];
+            
+            // Note: Be careful with flushing all cache tags
+            // Cache::flush(); // This would clear ALL cache
+        }
+    }
+    public function applyDynamicOrderFilters($query, $data = [])
+    {
+        if (empty($data)) {
+            $data = $this->getData();
+        }
+        
+        $model_columns = $this->getModelColumns();
+        
+        // Apply order_by filters
+        foreach ($data as $key => $value) {
+            if (strpos($key, 'order_by_') === 0 && !empty($value)) {
+                $column = str_replace('order_by_', '', $key);
+                if (in_array($column, $model_columns) && in_array(strtolower($value), ['asc', 'desc'])) {
+                    $query = $query->when(!empty($value), function($q) use ($column, $value) {
+                        return $q->orderBy($column, $value);
+                    });
+                }
+            }
+        }
+        
+        return $query;
+    }
+    public function applyDynamicSearchFilters($query, $data = [])
+    {
+        if (empty($data)) {
+            $data = $this->getData();
+        }
+        
+        $model_columns = $this->getModelColumns();
+        
+        // Apply search_by filters
+        foreach ($data as $key => $value) {
+            if (strpos($key, 'search_by_') === 0 && !empty($value)) {
+                $column = str_replace('search_by_', '', $key);
+                if (in_array($column, $model_columns)) {
+                    $query = $query->when(!empty($value), function($q) use ($column, $value) {
+                        return $q->where($column, 'like', '%' . $value . '%');
+                    });
+                }
+            }
+        }
+        
+        return $query;
+    }
+
+    public function applyDynamicFilters($query, $data = [])
+    {
+        $query = $this->applyDynamicSearchFilters($query, $data);
+        $query = $this->applyDynamicOrderFilters($query, $data);
+        return $query;
+    }
+
+    // public function applyDynamicSearchFilters($query, $data = [])
+    // {
+    //     if (empty($data)) {
+    //         $data = $this->getData();
+    //     }
+        
+    //     $model_columns = $this->getModelColumns();
+    //     $column_types = $this->getColumnTypes();
+        
+    //     foreach ($data as $key => $value) {
+    //         if (empty($value)) continue;
+            
+    //         // Handle different search patterns based on column type
+    //         if (strpos($key, 'search_by_') === 0) {
+    //             $column = str_replace('search_by_', '', $key);
+                
+    //             if (!in_array($column, $model_columns)) continue;
+                
+    //             $column_type = $column_types[$column] ?? 'string';
+                
+    //             // Apply type-specific search logic
+    //             switch ($column_type) {
+    //                 case 'string':
+    //                     $query = $query->when(!empty($value), function($q) use ($column, $value) {
+    //                         return $q->where($column, 'like', '%' . $value . '%');
+    //                     });
+    //                     break;
+                        
+    //                 case 'integer':
+    //                 case 'numeric':
+    //                     $query = $query->when(!empty($value), function($q) use ($column, $value) {
+    //                         return $q->where($column, '=', $value);
+    //                     });
+    //                     break;
+                        
+    //                 case 'boolean':
+    //                     $query = $query->when(isset($value), function($q) use ($column, $value) {
+    //                         return $q->where($column, '=', $value);
+    //                     });
+    //                     break;
+                        
+    //                 case 'date':
+    //                     $query = $query->when(!empty($value), function($q) use ($column, $value) {
+    //                         return $q->whereDate($column, '=', $value);
+    //                     });
+    //                     break;
+                        
+    //                 default:
+    //                     $query = $query->when(!empty($value), function($q) use ($column, $value) {
+    //                         return $q->where($column, '=', $value);
+    //                     });
+    //                     break;
+    //             }
+    //         }
+            
+    //         // Handle range searches for numeric and date fields
+    //         elseif (preg_match('/^search_by_(.+)_(min|max|from|to)$/', $key, $matches)) {
+    //             $column = $matches[1];
+    //             $range_type = $matches[2];
+                
+    //             if (!in_array($column, $model_columns)) continue;
+                
+    //             $column_type = $column_types[$column] ?? 'string';
+                
+    //             if (in_array($column_type, ['integer', 'numeric'])) {
+    //                 switch ($range_type) {
+    //                     case 'min':
+    //                         $query = $query->when(!empty($value), function($q) use ($column, $value) {
+    //                             return $q->where($column, '>=', $value);
+    //                         });
+    //                         break;
+    //                     case 'max':
+    //                         $query = $query->when(!empty($value), function($q) use ($column, $value) {
+    //                             return $q->where($column, '<=', $value);
+    //                         });
+    //                         break;
+    //                 }
+    //             }
+                
+    //             if ($column_type === 'date') {
+    //                 switch ($range_type) {
+    //                     case 'from':
+    //                         $query = $query->when(!empty($value), function($q) use ($column, $value) {
+    //                             return $q->whereDate($column, '>=', $value);
+    //                         });
+    //                         break;
+    //                     case 'to':
+    //                         $query = $query->when(!empty($value), function($q) use ($column, $value) {
+    //                             return $q->whereDate($column, '<=', $value);
+    //                         });
+    //                         break;
+    //                 }
+    //             }
+    //         }
+    //     }
+        
+    //     return $query;
+    // }
 }
