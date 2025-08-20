@@ -46,7 +46,7 @@ abstract class CrudController extends ApiBaseController implements CrudBaseContr
             }
             $this->service->setQuery($itemsQuery);
         } catch (ValidationException $th) {
-            return $this->error($th->getMessage(), $th->getCode(), $th);
+            return $this->error($th->getMessage(), 422, $th);
         } catch (\Exception $th) {
             return $this->errorBadRequest($th->getMessage(), $th);
         }
@@ -68,7 +68,7 @@ abstract class CrudController extends ApiBaseController implements CrudBaseContr
                 ->afterShow()
                 ->get();
         } catch (ValidationException $th) {
-            return $this->error($th->getMessage(), $th->getCode(), $th);
+            return $this->error($th->getMessage(), 422, $th);
         } catch (NotFoundException $th) {
             return $this->errorNotFound($th->getMessage(), $th);
         } catch (\Exception $th) {
@@ -104,7 +104,7 @@ abstract class CrudController extends ApiBaseController implements CrudBaseContr
         } catch (ValidationException $th) {
             if (!$this->service->getIsTransactionEnabled())
                 DB::rollBack();
-            return $this->error($th->getMessage(), $th->getCode(), $th);
+            return $this->error($th->getMessage(), 422, $th);
         } catch (CreateException $th) {
             if (!$this->service->getIsTransactionEnabled())
                 DB::rollBack();
@@ -148,7 +148,7 @@ abstract class CrudController extends ApiBaseController implements CrudBaseContr
         } catch (ValidationException $th) {
             if (!$this->service->getIsTransactionEnabled())
                 DB::rollBack();
-            return $this->error($th->getMessage(), $th->getCode(), $th);
+            return $this->error($th->getMessage(), 422, $th);
         } catch (UpdateException $th) {
             if (!$this->service->getIsTransactionEnabled())
                 DB::rollBack();
@@ -191,7 +191,7 @@ abstract class CrudController extends ApiBaseController implements CrudBaseContr
         } catch (ValidationException $th) {
             if (!$this->service->getIsTransactionEnabled())
                 DB::rollBack();
-            return $this->error($th->getMessage(), $th->getCode(), $th);
+            return $this->error($th->getMessage(), 422, $th);
         } catch (NotFoundException $th) {
             if (!$this->service->getIsTransactionEnabled())
                 DB::rollBack();
@@ -228,7 +228,7 @@ abstract class CrudController extends ApiBaseController implements CrudBaseContr
         } catch (ValidationException $th) {
             if (!$this->service->getIsTransactionEnabled())
                 DB::rollBack();
-            return $this->error($th->getMessage(), $th->getCode(), $th);
+            return $this->error($th->getMessage(), 422, $th);
         } catch (NotFoundException $th) {
             if (!$this->service->getIsTransactionEnabled())
                 DB::rollBack();
@@ -278,7 +278,7 @@ abstract class CrudController extends ApiBaseController implements CrudBaseContr
         } catch (ValidationException $th) {
             if (!$this->service->getIsTransactionEnabled())
                 DB::rollBack();
-            return $this->error($th->getMessage(), $th->getCode(), $th);
+            return $this->error($th->getMessage(), 422, $th);
         } catch (NotFoundException $th) {
             if (!$this->service->getIsTransactionEnabled())
                 DB::rollBack();
