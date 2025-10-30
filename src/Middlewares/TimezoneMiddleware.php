@@ -10,7 +10,8 @@ class TimezoneMiddleware
 {
     public function handle(Request $request, Closure $next)
     {
-        if ($timezone = $request->header('Timezone', 'Asia/Tashkent')) {
+        $defaultTimezone = config('microcrud.timezone', 'UTC');
+        if ($timezone = $request->header('Timezone', $defaultTimezone)) {
             date_default_timezone_set($timezone);
             // $possible_dates = [
             //     'created_at',

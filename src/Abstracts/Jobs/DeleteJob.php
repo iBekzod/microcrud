@@ -10,22 +10,26 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Contracts\Queue\ShouldBeUnique;
 
-class UpdateJob implements ShouldQueue, ShouldBeUnique
+class DeleteJob implements ShouldQueue, ShouldBeUnique
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
-    protected $data;
+    protected $id;
     protected $service;
+    protected $forceDelete;
     /**
      * Create a new job instance.
      *
-     * @param array $data
+     * @param mixed $id
+     * @param Service $service
+     * @param bool $forceDelete
      * @return void
      */
-    public function __construct($data, $service)
+    public function __construct($id, $service, $forceDelete = false)
     {
         $this->service = $service;
-        $this->data = $data;
+        $this->id = $id;
+        $this->forceDelete = $forceDelete;
     }
 
     /**
@@ -35,14 +39,15 @@ class UpdateJob implements ShouldQueue, ShouldBeUnique
      */
     public function handle()
     {
-        $this->service->update($this->data);
+        $this->service->delete($this->id, $this->forceDelete);
     }
 
     public function failed(\Exception $e)
     {
-        \Illuminate\Support\Facades\Log::error('MicroCRUD UpdateJob failed: ' . $e->getMessage(), [
+        \Illuminate\Support\Facades\Log::error('MicroCRUD DeleteJob failed: ' . $e->getMessage(), [
             'exception' => $e,
-            'data' => $this->data,
+            'id' => $this->id,
+            'force_delete' => $this->forceDelete,
             'trace' => $e->getTraceAsString(),
         ]);
     }

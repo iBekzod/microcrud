@@ -3,6 +3,9 @@
 namespace Microcrud;
 
 use Illuminate\Support\ServiceProvider;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Config;
+use Illuminate\Support\Facades\Log;
 use Microcrud\Middlewares\LogHttpRequest;
 use Microcrud\Middlewares\LocaleMiddleware;
 use Microcrud\Middlewares\TimezoneMiddleware;
@@ -16,6 +19,11 @@ class MicrocrudServiceProvider extends ServiceProvider
      */
     public function boot()
     {
+        // Validate configuration on boot if enabled
+        if (Config::get('microcrud.features.validate_on_boot', true)) {
+            $this->validateConfiguration();
+        }
+
         //        // Include the package classmap autoloader
         //        if (\File::exists(__DIR__.'/../vendor/autoload.php'))
         //        {
@@ -118,6 +126,50 @@ class MicrocrudServiceProvider extends ServiceProvider
         //            ]);
         //        }
 
+    }
+
+    /**
+     * Validate MicroCRUD configuration on boot.
+     *
+     * @return void
+     */
+    protected function validateConfiguration()
+    {
+        try {
+            // Check cache configuration
+            if (Config::get('microcrud.cache.enabled', false)) {
+                $driver = Config::get('cache.default');
+
+                try {
+                    $store = Cache::getStore();
+                    $supportsTagging = method_exists($store, 'tags') &&
+                                     in_array($driver, ['redis', 'memcached', 'dynamodb']);
+
+                    if (!$supportsTagging && Config::get('microcrud.cache.validate_tagging', true)) {
+                        Log::warning("MicroCRUD: Cache driver '{$driver}' doesn't support tagging. " .
+                                   "Cache operations may not work as expected. " .
+                                   "Consider using Redis or Memcached, or set MICROCRUD_CACHE_VALIDATE_TAGGING=false.");
+                    }
+                } catch (\Exception $e) {
+                    Log::warning("MicroCRUD: Cache validation failed: {$e->getMessage()}");
+                }
+            }
+
+            // Check queue configuration
+            if (Config::get('microcrud.queue.enabled', false)) {
+                $connection = Config::get('queue.default');
+
+                if (!$connection || $connection === 'null') {
+                    Log::warning("MicroCRUD: Queue is enabled but no queue connection is configured. " .
+                               "Set QUEUE_CONNECTION in your .env file.");
+                } elseif ($connection === 'sync') {
+                    Log::info("MicroCRUD: Queue connection is 'sync'. Jobs will run synchronously, not in the background.");
+                }
+            }
+        } catch (\Exception $e) {
+            // Don't let validation errors break the application
+            Log::error("MicroCRUD: Configuration validation error: {$e->getMessage()}");
+        }
     }
 
     /**

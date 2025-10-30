@@ -7,6 +7,8 @@ use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Config;
+use Illuminate\Support\Facades\Queue;
 use Microcrud\Responses\ItemResource;
 use Illuminate\Support\Facades\Schema;
 use Microcrud\Abstracts\Jobs\StoreJob;
@@ -115,6 +117,125 @@ abstract class Service implements ServiceInterface
     }
 
     /**
+     * Check if the current cache driver supports tagging.
+     * Only Redis, Memcached, and DynamoDB support cache tagging.
+     *
+     * @return bool
+     */
+    protected function cacheSupportsTagging()
+    {
+        try {
+            $driver = Config::get('cache.default');
+            $store = Cache::getStore();
+
+            // Check if the store has the tags method and the driver supports it
+            return method_exists($store, 'tags') &&
+                   in_array($driver, ['redis', 'memcached', 'dynamodb']);
+        } catch (\Exception $e) {
+            Log::warning("Failed to check cache tagging support: {$e->getMessage()}");
+            return false;
+        }
+    }
+
+    /**
+     * Validate and potentially auto-disable caching if misconfigured.
+     *
+     * @return void
+     */
+    protected function validateCacheConfiguration()
+    {
+        if (!$this->getIsCacheable()) {
+            return;
+        }
+
+        try {
+            // Test if cache is available
+            Cache::get('__microcrud_test__');
+
+            // Check if tagging is required but not supported
+            if (!$this->cacheSupportsTagging()) {
+                $driver = Config::get('cache.default');
+                $message = "MicroCRUD: Cache driver '{$driver}' doesn't support tagging. ";
+
+                if (Config::get('microcrud.cache.auto_disable_on_error', true)) {
+                    $message .= "Caching has been auto-disabled.";
+                    $this->setIsCacheable(false);
+                } else {
+                    $message .= "Cache operations may fail.";
+                }
+
+                Log::warning($message);
+            }
+        } catch (\Exception $e) {
+            $message = "MicroCRUD: Cache is not available: {$e->getMessage()}. ";
+
+            if (Config::get('microcrud.cache.auto_disable_on_error', true)) {
+                $message .= "Caching has been auto-disabled.";
+                $this->setIsCacheable(false);
+            }
+
+            Log::warning($message);
+        }
+    }
+
+    /**
+     * Flush cache for the model, handling both tagging and non-tagging drivers.
+     *
+     * @param string|null $tag Optional tag to flush (defaults to model table name)
+     * @return void
+     */
+    protected function flushModelCache($tag = null)
+    {
+        if (!$this->getIsCacheable()) {
+            return;
+        }
+
+        try {
+            $tag = $tag ?? $this->getModelTableName();
+
+            if ($this->cacheSupportsTagging()) {
+                Cache::tags($tag)->flush();
+            } else {
+                // For non-tagging drivers, we can't selectively flush
+                // Log a warning but don't flush everything
+                Log::debug("MicroCRUD: Cache flush requested but driver doesn't support tagging. Skipping flush.");
+            }
+        } catch (\Exception $e) {
+            Log::warning("MicroCRUD: Failed to flush cache: {$e->getMessage()}");
+        }
+    }
+
+    /**
+     * Validate queue configuration before dispatching jobs.
+     *
+     * @return bool
+     */
+    protected function validateQueueConfiguration()
+    {
+        if (!Config::get('microcrud.queue.validate', true)) {
+            return true; // Skip validation if disabled
+        }
+
+        try {
+            $connection = Config::get('queue.default');
+
+            if (!$connection || $connection === 'null') {
+                Log::warning("MicroCRUD: Queue connection is not configured.");
+                return false;
+            }
+
+            if ($connection === 'sync') {
+                Log::info("MicroCRUD: Queue connection is 'sync'. Jobs will run synchronously.");
+            }
+
+            return true;
+        } catch (\Exception $e) {
+            Log::error("MicroCRUD: Failed to validate queue configuration: {$e->getMessage()}");
+            return false;
+        }
+    }
+
+    /**
      * @throws NotFoundException
      */
     public function get()
@@ -170,16 +291,34 @@ abstract class Service implements ServiceInterface
         }
         if (array_key_exists($this->getPrivateKeyName(), $data)) {
             if ($this->getIsCacheable()) {
-                ksort($data);
-                $item_key = $this->getModelTableName() . ':' . serialize($data);
-                $model = Cache::tags([$this->getModelTableName()])
-                    ->remember(
-                        $item_key,
-                        $this->getCacheExpiresAt(),
-                        function () use ($data) {
-                            return $this->withoutScopes()->getQuery()->where($this->getPrivateKeyName(), $data[$this->getPrivateKeyName()])->first();
-                        }
-                    );
+                $this->validateCacheConfiguration();
+
+                if ($this->getIsCacheable()) { // Re-check after validation
+                    ksort($data);
+                    $item_key = $this->getModelTableName() . ':' . serialize($data);
+
+                    if ($this->cacheSupportsTagging()) {
+                        $model = Cache::tags([$this->getModelTableName()])
+                            ->remember(
+                                $item_key,
+                                $this->getCacheExpiresAt(),
+                                function () use ($data) {
+                                    return $this->withoutScopes()->getQuery()->where($this->getPrivateKeyName(), $data[$this->getPrivateKeyName()])->first();
+                                }
+                            );
+                    } else {
+                        // Fallback for drivers that don't support tagging
+                        $model = Cache::remember(
+                            $item_key,
+                            $this->getCacheExpiresAt(),
+                            function () use ($data) {
+                                return $this->withoutScopes()->getQuery()->where($this->getPrivateKeyName(), $data[$this->getPrivateKeyName()])->first();
+                            }
+                        );
+                    }
+                } else {
+                    $model = $this->withoutScopes()->getQuery()->where($this->getPrivateKeyName(), $data[$this->getPrivateKeyName()])->first();
+                }
             } else {
                 $model = $this->withoutScopes()->getQuery()->where($this->getPrivateKeyName(), $data[$this->getPrivateKeyName()])->first();
             }
@@ -248,8 +387,14 @@ abstract class Service implements ServiceInterface
                     } else {
                         $rule = $rule . "|exists:{$schema}.{$tableName},{$relation_key_type}";
                     }
-                } else if (Schema::hasTable($relation_table)) {
-                    $rule = $rule . "|exists:{$relation_table},{$relation_key_type}";
+                } else {
+                    try {
+                        if (Schema::hasTable($relation_table)) {
+                            $rule = $rule . "|exists:{$relation_table},{$relation_key_type}";
+                        }
+                    } catch (\Exception $e) {
+                        Log::warning("MicroCRUD: Could not check table existence for {$relation_table}: {$e->getMessage()}");
+                    }
                 }
             }
         }
@@ -297,8 +442,22 @@ abstract class Service implements ServiceInterface
         if (!$model) {
             $model = $this->model;
         }
-        $keys = $model->getConnection()->getSchemaBuilder()->getColumnListing($this->getModelTableName($model));
-        return $keys;
+
+        try {
+            $keys = $model->getConnection()->getSchemaBuilder()->getColumnListing($this->getModelTableName($model));
+            return $keys;
+        } catch (\Exception $e) {
+            $message = "MicroCRUD: Failed to get model columns: {$e->getMessage()}. ";
+            $message .= "Ensure your database is configured and accessible.";
+            Log::error($message);
+
+            if (Config::get('microcrud.features.strict_mode', false)) {
+                throw new \RuntimeException($message, 0, $e);
+            }
+
+            // Return empty array in non-strict mode
+            return [];
+        }
     }
     public function getModelTableName($model = null)
     {
@@ -367,16 +526,34 @@ abstract class Service implements ServiceInterface
         }
         $limit = request()->limit ?? 10;
         if ($this->getIsCacheable()) {
-            ksort($data);
-            $item_key = request()->path() . ":" . $modelTableName . ":" . serialize($data);
-            $items = Cache::tags([$modelTableName])
-                ->remember(
-                    $item_key,
-                    $this->getCacheExpiresAt(),
-                    function () use ($modelQuery, $limit) {
-                        return $modelQuery->paginate($limit);
-                    }
-                );
+            $this->validateCacheConfiguration();
+
+            if ($this->getIsCacheable()) { // Re-check after validation
+                ksort($data);
+                $item_key = request()->path() . ":" . $modelTableName . ":" . serialize($data);
+
+                if ($this->cacheSupportsTagging()) {
+                    $items = Cache::tags([$modelTableName])
+                        ->remember(
+                            $item_key,
+                            $this->getCacheExpiresAt(),
+                            function () use ($modelQuery, $limit) {
+                                return $modelQuery->paginate($limit);
+                            }
+                        );
+                } else {
+                    // Fallback for non-tagging drivers
+                    $items = Cache::remember(
+                        $item_key,
+                        $this->getCacheExpiresAt(),
+                        function () use ($modelQuery, $limit) {
+                            return $modelQuery->paginate($limit);
+                        }
+                    );
+                }
+            } else {
+                $items = $modelQuery->paginate($limit);
+            }
         } else {
             $items =  $modelQuery->paginate($limit);
         }
@@ -402,7 +579,28 @@ abstract class Service implements ServiceInterface
         if (empty($data)) {
             $data = $this->getData();
         }
-        StoreJob::dispatchSync($data, $this);
+
+        if (!$this->validateQueueConfiguration()) {
+            if (Config::get('microcrud.queue.auto_disable_on_error', true)) {
+                Log::warning("MicroCRUD: Queue validation failed. Running create synchronously instead.");
+                return $this->create($data);
+            }
+        }
+
+        try {
+            // Use Queue facade to push the job
+            Queue::push(new StoreJob($data, $this));
+        } catch (\Exception $e) {
+            Log::error("MicroCRUD: Failed to dispatch create job: {$e->getMessage()}");
+
+            if (Config::get('microcrud.queue.auto_disable_on_error', true)) {
+                Log::warning("MicroCRUD: Falling back to synchronous create.");
+                return $this->create($data);
+            }
+
+            throw $e;
+        }
+
         return $this;
     }
     /**
@@ -441,9 +639,7 @@ abstract class Service implements ServiceInterface
     }
     public function afterCreate()
     {
-        if ($this->getIsCacheable()) {
-            Cache::tags($this->getModelTableName())->flush();
-        }
+        $this->flushModelCache();
         return $this;
     }
 
@@ -475,7 +671,28 @@ abstract class Service implements ServiceInterface
         if (empty($data)) {
             $data = $this->getData();
         }
-        UpdateJob::dispatchSync($data, $this);
+
+        if (!$this->validateQueueConfiguration()) {
+            if (Config::get('microcrud.queue.auto_disable_on_error', true)) {
+                Log::warning("MicroCRUD: Queue validation failed. Running update synchronously instead.");
+                return $this->update($data);
+            }
+        }
+
+        try {
+            // Use Queue facade to push the job
+            Queue::push(new UpdateJob($data, $this));
+        } catch (\Exception $e) {
+            Log::error("MicroCRUD: Failed to dispatch update job: {$e->getMessage()}");
+
+            if (Config::get('microcrud.queue.auto_disable_on_error', true)) {
+                Log::warning("MicroCRUD: Falling back to synchronous update.");
+                return $this->update($data);
+            }
+
+            throw $e;
+        }
+
         return $this;
     }
     /**
@@ -512,9 +729,7 @@ abstract class Service implements ServiceInterface
     }
     public function afterUpdate()
     {
-        if ($this->getIsCacheable()) {
-            Cache::tags($this->getModelTableName())->flush();
-        }
+        $this->flushModelCache();
         return $this;
     }
 
@@ -614,9 +829,7 @@ abstract class Service implements ServiceInterface
     }
     public function afterBulkAction()
     {
-        if ($this->getIsCacheable()) {
-            Cache::tags($this->getModelTableName())->flush();
-        }
+        $this->flushModelCache();
         return $this;
     }
     public function createOrUpdate($data = [], $conditions = [])
@@ -659,9 +872,7 @@ abstract class Service implements ServiceInterface
     }
     public function afterDelete()
     {
-        if ($this->getIsCacheable()) {
-            Cache::tags($this->getModelTableName())->flush();
-        }
+        $this->flushModelCache();
         return $this;
     }
     public function beforeRestore()
@@ -679,9 +890,7 @@ abstract class Service implements ServiceInterface
     }
     public function afterRestore()
     {
-        if ($this->getIsCacheable()) {
-            Cache::tags($this->getModelTableName())->flush();
-        }
+        $this->flushModelCache();
         return $this;
     }
     public function indexRules($rules = [], $replace = false)
@@ -696,40 +905,36 @@ abstract class Service implements ServiceInterface
                 'updated_at' => 'sometimes',
             ];
             $model_columns = $this->getModelColumns();
+            $column_types = $this->getColumnTypes();
             foreach ($model_columns as $column) {
-                $base_rules["search_by_{$column}"] = 'sometimes|nullable';
+                $column_type = $column_types[$column] ?? 'string';
+
+                switch ($column_type) {
+                    case 'integer':
+                        $base_rules["search_by_{$column}"] = 'sometimes|integer';
+                        $base_rules["search_by_{$column}_min"] = 'sometimes|integer';
+                        $base_rules["search_by_{$column}_max"] = 'sometimes|integer';
+                        break;
+                    case 'numeric':
+                        $base_rules["search_by_{$column}"] = 'sometimes|numeric';
+                        $base_rules["search_by_{$column}_min"] = 'sometimes|numeric';
+                        $base_rules["search_by_{$column}_max"] = 'sometimes|numeric';
+                        break;
+                    case 'date':
+                        $base_rules["search_by_{$column}"] = 'sometimes|date';
+                        $base_rules["search_by_{$column}_from"] = 'sometimes|date';
+                        $base_rules["search_by_{$column}_to"] = 'sometimes|date';
+                        break;
+                    case 'boolean':
+                        $base_rules["search_by_{$column}"] = 'sometimes|boolean';
+                        break;
+                    default:
+                        $base_rules["search_by_{$column}"] = 'sometimes|nullable';
+                        break;
+                }
+
                 $base_rules["order_by_{$column}"] = 'sometimes|in:asc,desc';
             }
-            // $column_types = $this->getColumnTypes();
-            // foreach ($model_columns as $column) {
-            //     $column_type = $column_types[$column] ?? 'string';
-                
-            //     switch ($column_type) {
-            //         case 'integer':
-            //             $base_rules["search_by_{$column}"] = 'sometimes|integer';
-            //             $base_rules["search_by_{$column}_min"] = 'sometimes|integer';
-            //             $base_rules["search_by_{$column}_max"] = 'sometimes|integer';
-            //             break;
-            //         case 'numeric':
-            //             $base_rules["search_by_{$column}"] = 'sometimes|numeric';
-            //             $base_rules["search_by_{$column}_min"] = 'sometimes|numeric';
-            //             $base_rules["search_by_{$column}_max"] = 'sometimes|numeric';
-            //             break;
-            //         case 'date':
-            //             $base_rules["search_by_{$column}"] = 'sometimes|date';
-            //             $base_rules["search_by_{$column}_from"] = 'sometimes|date';
-            //             $base_rules["search_by_{$column}_to"] = 'sometimes|date';
-            //             break;
-            //         case 'boolean':
-            //             $base_rules["search_by_{$column}"] = 'sometimes|boolean';
-            //             break;
-            //         default:
-            //             $base_rules["search_by_{$column}"] = 'sometimes|string';
-            //             break;
-            //     }
-                
-            //     $base_rules["order_by_{$column}"] = 'sometimes|in:asc,desc';
-            // }
             $rules = array_merge($base_rules, $rules);
             if ($this->getIsPaginated()) {
                 return array_merge([
@@ -936,21 +1141,43 @@ abstract class Service implements ServiceInterface
         
         // Use Laravel cache with tags (consistent with your service)
         if ($this->getIsCacheable()) {
-            return Cache::tags([$tableName])
-                ->remember(
-                    $cacheKey,
-                    $this->getCacheExpiresAt(),
-                    function () use ($model, $cacheKey, $useCache) {
-                        $types = $this->fetchColumnTypesFromDatabase($model);
-                        
-                        // Also store in memory cache
-                        if ($useCache) {
-                            self::$columnTypesCache[$cacheKey] = $types;
+            $this->validateCacheConfiguration();
+
+            if ($this->getIsCacheable()) { // Re-check after validation
+                if ($this->cacheSupportsTagging()) {
+                    return Cache::tags([$tableName])
+                        ->remember(
+                            $cacheKey,
+                            $this->getCacheExpiresAt(),
+                            function () use ($model, $cacheKey, $useCache) {
+                                $types = $this->fetchColumnTypesFromDatabase($model);
+
+                                // Also store in memory cache
+                                if ($useCache) {
+                                    self::$columnTypesCache[$cacheKey] = $types;
+                                }
+
+                                return $types;
+                            }
+                        );
+                } else {
+                    // Fallback for non-tagging drivers
+                    return Cache::remember(
+                        $cacheKey,
+                        $this->getCacheExpiresAt(),
+                        function () use ($model, $cacheKey, $useCache) {
+                            $types = $this->fetchColumnTypesFromDatabase($model);
+
+                            // Also store in memory cache
+                            if ($useCache) {
+                                self::$columnTypesCache[$cacheKey] = $types;
+                            }
+
+                            return $types;
                         }
-                        
-                        return $types;
-                    }
-                );
+                    );
+                }
+            }
         }
         
         // Fallback to direct database query
@@ -980,9 +1207,12 @@ abstract class Service implements ServiceInterface
                 case 'sqlsrv':
                     return $this->getSQLServerColumnTypes($connection, $tableName);
                 default:
-                    return [];
+                    Log::warning("MicroCRUD: Unsupported database driver: {$driver}. Using fallback type detection.");
+                    $columns = $this->getModelColumns($model);
+                    return array_fill_keys($columns, 'string');
             }
         } catch (\Exception $e) {
+            Log::warning("MicroCRUD: Failed to fetch column types: {$e->getMessage()}. Using fallback.");
             // Fallback: return basic string types for all columns
             $columns = $this->getModelColumns($model);
             return array_fill_keys($columns, 'string');
@@ -1121,11 +1351,9 @@ abstract class Service implements ServiceInterface
             
             // Clear memory cache
             unset(self::$columnTypesCache[$cacheKey]);
-            
-            // Clear Laravel cache with tags
-            if ($this->getIsCacheable()) {
-                Cache::tags([$tableName])->flush();
-            }
+
+            // Clear Laravel cache
+            $this->flushModelCache($tableName);
         } else {
             // Clear all memory cache
             self::$columnTypesCache = [];
@@ -1161,21 +1389,97 @@ abstract class Service implements ServiceInterface
         if (empty($data)) {
             $data = $this->getData();
         }
-        
+
         $model_columns = $this->getModelColumns();
-        
-        // Apply search_by filters
+        $column_types = $this->getColumnTypes();
+
         foreach ($data as $key => $value) {
-            if (strpos($key, 'search_by_') === 0 && !empty($value)) {
+            if (empty($value) && $value !== '0' && $value !== 0 && $value !== false) continue;
+
+            // Handle different search patterns based on column type
+            if (strpos($key, 'search_by_') === 0) {
                 $column = str_replace('search_by_', '', $key);
-                if (in_array($column, $model_columns)) {
-                    $query = $query->when(!empty($value), function($q) use ($column, $value) {
-                        return $q->where($column, 'like', '%' . $value . '%');
-                    });
+
+                if (!in_array($column, $model_columns)) continue;
+
+                $column_type = $column_types[$column] ?? 'string';
+
+                // Apply type-specific search logic
+                switch ($column_type) {
+                    case 'string':
+                        $query = $query->when(!empty($value), function($q) use ($column, $value) {
+                            return $q->where($column, 'like', '%' . $value . '%');
+                        });
+                        break;
+
+                    case 'integer':
+                    case 'numeric':
+                        $query = $query->when(!empty($value), function($q) use ($column, $value) {
+                            return $q->where($column, '=', $value);
+                        });
+                        break;
+
+                    case 'boolean':
+                        $query = $query->when(isset($value), function($q) use ($column, $value) {
+                            return $q->where($column, '=', $value);
+                        });
+                        break;
+
+                    case 'date':
+                        $query = $query->when(!empty($value), function($q) use ($column, $value) {
+                            return $q->whereDate($column, '=', $value);
+                        });
+                        break;
+
+                    default:
+                        $query = $query->when(!empty($value), function($q) use ($column, $value) {
+                            return $q->where($column, '=', $value);
+                        });
+                        break;
+                }
+            }
+
+            // Handle range searches for numeric and date fields
+            elseif (preg_match('/^search_by_(.+)_(min|max|from|to)$/', $key, $matches)) {
+                $column = $matches[1];
+                $range_type = $matches[2];
+
+                if (!in_array($column, $model_columns)) continue;
+
+                $column_type = $column_types[$column] ?? 'string';
+
+                if (in_array($column_type, ['integer', 'numeric'])) {
+                    switch ($range_type) {
+                        case 'min':
+                            $query = $query->when(!empty($value), function($q) use ($column, $value) {
+                                return $q->where($column, '>=', $value);
+                            });
+                            break;
+                        case 'max':
+                            $query = $query->when(!empty($value), function($q) use ($column, $value) {
+                                return $q->where($column, '<=', $value);
+                            });
+                            break;
+                    }
+                }
+
+                if ($column_type === 'date') {
+                    switch ($range_type) {
+                        case 'from':
+                            $query = $query->when(!empty($value), function($q) use ($column, $value) {
+                                return $q->whereDate($column, '>=', $value);
+                            });
+                            break;
+                        case 'to':
+                            $query = $query->when(!empty($value), function($q) use ($column, $value) {
+                                return $q->whereDate($column, '<=', $value);
+                            });
+                            break;
+                    }
                 }
             }
         }
-        
+
         return $query;
     }
 
@@ -1185,103 +1489,4 @@ abstract class Service implements ServiceInterface
         $query = $this->applyDynamicOrderFilters($query, $data);
         return $query;
     }
-
-    // public function applyDynamicSearchFilters($query, $data = [])
-    // {
-    //     if (empty($data)) {
-    //         $data = $this->getData();
-    //     }
-        
-    //     $model_columns = $this->getModelColumns();
-    //     $column_types = $this->getColumnTypes();
-        
-    //     foreach ($data as $key => $value) {
-    //         if (empty($value)) continue;
-            
-    //         // Handle different search patterns based on column type
-    //         if (strpos($key, 'search_by_') === 0) {
-    //             $column = str_replace('search_by_', '', $key);
-                
-    //             if (!in_array($column, $model_columns)) continue;
-                
-    //             $column_type = $column_types[$column] ?? 'string';
-                
-    //             // Apply type-specific search logic
-    //             switch ($column_type) {
-    //                 case 'string':
-    //                     $query = $query->when(!empty($value), function($q) use ($column, $value) {
-    //                         return $q->where($column, 'like', '%' . $value . '%');
-    //                     });
-    //                     break;
-                        
-    //                 case 'integer':
-    //                 case 'numeric':
-    //                     $query = $query->when(!empty($value), function($q) use ($column, $value) {
-    //                         return $q->where($column, '=', $value);
-    //                     });
-    //                     break;
-                        
-    //                 case 'boolean':
-    //                     $query = $query->when(isset($value), function($q) use ($column, $value) {
-    //                         return $q->where($column, '=', $value);
-    //                     });
-    //                     break;
-                        
-    //                 case 'date':
-    //                     $query = $query->when(!empty($value), function($q) use ($column, $value) {
-    //                         return $q->whereDate($column, '=', $value);
-    //                     });
-    //                     break;
-                        
-    //                 default:
-    //                     $query = $query->when(!empty($value), function($q) use ($column, $value) {
-    //                         return $q->where($column, '=', $value);
-    //                     });
-    //                     break;
-    //             }
-    //         }
-            
-    //         // Handle range searches for numeric and date fields
-    //         elseif (preg_match('/^search_by_(.+)_(min|max|from|to)$/', $key, $matches)) {
-    //             $column = $matches[1];
-    //             $range_type = $matches[2];
-                
-    //             if (!in_array($column, $model_columns)) continue;
-                
-    //             $column_type = $column_types[$column] ?? 'string';
-                
-    //             if (in_array($column_type, ['integer', 'numeric'])) {
-    //                 switch ($range_type) {
-    //                     case 'min':
-    //                         $query = $query->when(!empty($value), function($q) use ($column, $value) {
-    //                             return $q->where($column, '>=', $value);
-    //                         });
-    //                         break;
-    //                     case 'max':
-    //                         $query = $query->when(!empty($value), function($q) use ($column, $value) {
-    //                             return $q->where($column, '<=', $value);
-    //                         });
-    //                         break;
-    //                 }
-    //             }
-                
-    //             if ($column_type === 'date') {
-    //                 switch ($range_type) {
-    //                     case 'from':
-    //                         $query = $query->when(!empty($value), function($q) use ($column, $value) {
-    //                             return $q->whereDate($column, '>=', $value);
-    //                         });
-    //                         break;
-    //                     case 'to':
-    //                         $query = $query->when(!empty($value), function($q) use ($column, $value) {
-    //                             return $q->whereDate($column, '<=', $value);
-    //                         });
-    //                         break;
-    //                 }
-    //             }
-    //         }
-    //     }
-        
-    //     return $query;
-    // }
 }

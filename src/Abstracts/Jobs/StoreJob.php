@@ -40,6 +40,10 @@ class StoreJob implements ShouldQueue, ShouldBeUnique
 
     public function failed(\Exception $e)
     {
-        \Illuminate\Support\Facades\Log::debug('Background exception: '.$e->getMessage());
+        \Illuminate\Support\Facades\Log::error('MicroCRUD StoreJob failed: ' . $e->getMessage(), [
+            'exception' => $e,
+            'data' => $this->data,
+            'trace' => $e->getTraceAsString(),
+        ]);
     }
 }
