@@ -13,7 +13,7 @@ return [
     | Leave empty to use the default application database connection.
     |
     */
-    'connection' => env('MICROCRUD_DB_CONNECTION', ''),
+    'connection' => '',
 
     /*
     |--------------------------------------------------------------------------
@@ -21,9 +21,10 @@ return [
     |--------------------------------------------------------------------------
     |
     | Enable or disable authorization checks in CRUD controllers.
+    | You can override this in your application's config/microcrud.php
     |
     */
-    'authorize' => env('MICROCRUD_AUTHORIZE', true),
+    'authorize' => true,
 
     /*
     |--------------------------------------------------------------------------
@@ -35,20 +36,20 @@ return [
     */
     'cache' => [
         // Enable/disable caching globally
-        'enabled' => env('MICROCRUD_CACHE_ENABLED', false),
+        'enabled' => false,
 
         // Default cache TTL in seconds
-        'ttl' => env('MICROCRUD_CACHE_TTL', 3600),
+        'ttl' => 3600,
 
         // Cache driver (leave empty to use default)
-        'driver' => env('MICROCRUD_CACHE_DRIVER', ''),
+        'driver' => '',
 
         // Validate if cache driver supports tagging
         // Note: Only Redis, Memcached, and DynamoDB support cache tagging
-        'validate_tagging' => env('MICROCRUD_CACHE_VALIDATE_TAGGING', true),
+        'validate_tagging' => true,
 
         // Auto-disable cache if driver doesn't support required features
-        'auto_disable_on_error' => env('MICROCRUD_CACHE_AUTO_DISABLE', true),
+        'auto_disable_on_error' => true,
     ],
 
     /*
@@ -61,16 +62,16 @@ return [
     */
     'queue' => [
         // Enable/disable queue jobs globally
-        'enabled' => env('MICROCRUD_QUEUE_ENABLED', false),
+        'enabled' => false,
 
         // Queue connection (leave empty to use default)
-        'connection' => env('MICROCRUD_QUEUE_CONNECTION', ''),
+        'connection' => '',
 
         // Validate queue configuration before dispatching jobs
-        'validate' => env('MICROCRUD_QUEUE_VALIDATE', true),
+        'validate' => true,
 
         // Auto-disable jobs if queue is misconfigured
-        'auto_disable_on_error' => env('MICROCRUD_QUEUE_AUTO_DISABLE', true),
+        'auto_disable_on_error' => true,
     ],
 
     /*
@@ -81,9 +82,9 @@ return [
     | Configure supported locales and default locale.
     |
     */
-    'locales' => array_filter(explode(',', env('MICROCRUD_LOCALES', 'en,ru,uz'))),
-    'locale' => env('MICROCRUD_LOCALE', 'en'),
-    'timezone' => env('MICROCRUD_TIMEZONE', 'UTC'),
+    'locales' => ['en', 'ru', 'uz'],
+    'locale' => 'en',
+    'timezone' => 'UTC',
 
     /*
     |--------------------------------------------------------------------------
@@ -95,12 +96,12 @@ return [
     */
     'features' => [
         // Validate configuration on package boot
-        'validate_on_boot' => env('MICROCRUD_VALIDATE_ON_BOOT', true),
+        'validate_on_boot' => true,
 
         // Auto-disable features that fail validation instead of throwing errors
-        'auto_disable_on_error' => env('MICROCRUD_AUTO_DISABLE_FEATURES', true),
+        'auto_disable_on_error' => true,
 
         // Strict mode: throw exceptions instead of logging warnings
-        'strict_mode' => env('MICROCRUD_STRICT_MODE', false),
+        'strict_mode' => false,
     ],
 ];

@@ -1,54 +1,45 @@
 {
     "name": "ibekzod/microcrud",
-    "description": "CRUD Structure for backed developers! ",
+    "description": "CRUD package for Laravel - Service-Repository pattern with caching, queues, and dynamic filtering",
     "type": "library",
     "keywords": [
-        "ibekzod",
-        "microcrud",
         "laravel",
-        "crud"
+        "crud",
+        "microcrud",
+        "service-repository",
+        "api"
     ],
-    "require": {
-        "php": ">=7.0",
-        "illuminate/database": "~5.2.0|^6.0|^7.0|^8.0|^9.0|^10.0|^11.0|^12.0",
-        "illuminate/filesystem": "~5.2.0|^6.0|^7.0|^8.0|^9.0|^10.0|^11.0|^12.0",
-        "illuminate/support": "~5.2.0|^6.0|^7.0|^8.0|^9.0|^10.0|^11.0|^12.0"
-    },
     "license": "MIT",
-    "autoload": {
-        "psr-4": {
-            "Microcrud\\": "src/"
-        }
-    },
     "authors": [
         {
             "name": "iBekzod",
             "email": "erkinovbegzod.45@gmail.com"
         }
     ],
-    "config": {
-        "sort-packages": true,
-        "allow-plugins": {
-            "php-http/discovery": true
+    "require": {
+        "php": "^7.4|^8.0|^8.1|^8.2|^8.3",
+        "illuminate/database": "^8.0|^9.0|^10.0|^11.0|^12.0",
+        "illuminate/filesystem": "^8.0|^9.0|^10.0|^11.0|^12.0",
+        "illuminate/http": "^8.0|^9.0|^10.0|^11.0|^12.0",
+        "illuminate/support": "^8.0|^9.0|^10.0|^11.0|^12.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "Microcrud\\": "src/"
         }
     },
-    "scripts": {
-        "prod": [
-            "composer install --prefer-dist --no-interaction --no-scripts --no-progress --no-ansi --no-dev",
-            "composer dump-autoload"
-        ],
-        "test": [
-            "composer install --prefer-dist --no-interaction --no-scripts --no-progress --no-ansi",
-            "composer dump-autoload"
-        ]
-    },
-    "minimum-stability": "stable",
-    "prefer-stable": true,
     "extra": {
         "laravel": {
             "providers": [
                 "Microcrud\\MicrocrudServiceProvider"
             ]
         }
-    }
+    },
+    "config": {
+        "sort-packages": true,
+        "optimize-autoloader": true,
+        "preferred-install": "dist"
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
 }
