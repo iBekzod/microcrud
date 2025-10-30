@@ -1744,10 +1744,716 @@ abstract class Service implements ServiceInterface
         return $query;
     }
 
+    /**
+     * Apply grouped pagination using window functions (ROW_NUMBER).
+     *
+     * This method allows paginating within each group while maintaining group structure.
+     * Uses ROW_NUMBER() OVER (PARTITION BY group_column ORDER BY sort_column).
+     *
+     * Example:
+     * - Get first 10 apartments per block
+     * - Get top 5 products per category
+     *
+     * @param \Illuminate\Database\Eloquent\Builder $query
+     * @param array $groupConfig Configuration: ['column' => 'block_id', 'limit' => 10, 'order_by' => 'created_at']
+     * @return \Illuminate\Database\Eloquent\Builder
+     */
+    protected function applyGroupedPagination($query, $groupConfig)
+    {
+        if (empty($groupConfig['column']) || empty($groupConfig['limit'])) {
+            return $query;
+        }
+
+        $groupColumn = $groupConfig['column'];
+        $limit = $groupConfig['limit'];
+        $orderBy = $groupConfig['order_by'] ?? 'id';
+        $orderDirection = $groupConfig['order_direction'] ?? 'asc';
+        $modelTableName = $this->getModelTableName();
+
+        // Build subquery with ROW_NUMBER
+        $subQuery = $this->model::selectRaw(
+            "{$modelTableName}.*, ROW_NUMBER() OVER (PARTITION BY {$modelTableName}.{$groupColumn} ORDER BY {$modelTableName}.{$orderBy} {$orderDirection}) as rn"
+        );
+
+        // Wrap in outer query to filter by row number
+        $query->fromSub($subQuery, $modelTableName)
+              ->where('rn', '<=', $limit);
+
+        return $query;
+    }
+
+    /**
+     * Apply GROUP BY clause dynamically based on group_bies parameter.
+     *
+     * Supports multiple syntax formats:
+     *
+     * 1. Simple grouping (array of strings):
+     *    group_bies = ['object_id', 'status']
+     *    group_bies = ['block.manager_id']
+     *
+     * 2. Grouped pagination (array with config):
+     *    group_bies = [
+     *        'object_id' => ['page' => 1, 'limit' => 10, 'search' => 'object1'],
+     *        'status'
+     *    ]
+     *
+     * 3. Relation-based grouped pagination:
+     *    group_bies = [
+     *        'block.manager_id' => ['page' => 1, 'limit' => 5, 'is_all' => false]
+     *    ]
+     *
+     * Features:
+     * - Validates all columns and relations exist
+     * - Automatically applies LEFT JOIN for relation columns
+     * - Automatically eager loads relations to prevent N+1 queries
+     * - Supports nested relations (e.g., 'block.manager.department_id')
+     * - Supports pagination within groups
+     * - Supports filtering within specific groups
+     *
+     * @param \Illuminate\Database\Eloquent\Builder $query
+     * @param array $data Request data containing group_bies parameter
+     * @return \Illuminate\Database\Eloquent\Builder
+     */
+    public function applyDynamicGroupBy($query, $data = [])
+    {
+        if (empty($data)) {
+            $data = $this->getData();
+        }
+
+        // Check if group_bies parameter exists
+        if (empty($data['group_bies']) || !is_array($data['group_bies'])) {
+            return $query;
+        }
+
+        $groupBies = $data['group_bies'];
+        $modelColumns = $this->getModelColumns();
+        $modelTableName = $this->getModelTableName();
+        $groupByColumns = [];
+        $relationsToLoad = [];
+        $groupFilters = []; // Store filters/pagination for specific groups
+
+        // Parse group_bies to separate simple groups from configured groups
+        foreach ($groupBies as $key => $value) {
+            $groupColumn = null;
+            $groupConfig = null;
+
+            // Determine if this is simple syntax or config syntax
+            if (is_numeric($key)) {
+                // Simple syntax: ['object_id', 'status']
+                $groupColumn = $value;
+                $groupConfig = null;
+            } else {
+                // Config syntax: ['object_id' => ['page' => 1, 'limit' => 10]]
+                $groupColumn = $key;
+                $groupConfig = is_array($value) ? $value : null;
+            }
+
+            // Store config for later if provided
+            if ($groupConfig !== null) {
+                $groupFilters[$groupColumn] = $groupConfig;
+            }
+
+            // Check if it's a relation column (contains dot notation like 'block.manager_id')
+            if (strpos($groupColumn, '.') !== false) {
+                $parts = explode('.', $groupColumn);
+
+                // Support nested relations (e.g., 'block.manager.department_id')
+                if (count($parts) >= 2) {
+                    $relationPath = [];
+                    $currentModel = $this->model;
+                    $isValidRelation = true;
+
+                    // Validate each relation in the path
+                    for ($i = 0; $i < count($parts) - 1; $i++) {
+                        $relationName = $parts[$i];
+                        $relationMethod = Str::camel($relationName);
+
+                        // Check if relation method exists
+                        if (!method_exists($currentModel, $relationMethod)) {
+                            Log::warning("MicroCRUD: Relation method '{$relationMethod}' does not exist on model " . get_class($currentModel));
+                            $isValidRelation = false;
+                            break;
+                        }
+
+                        // Get relation instance
+                        try {
+                            $relation = (new $currentModel)->{$relationMethod}();
+
+                            if (!($relation instanceof \Illuminate\Database\Eloquent\Relations\Relation)) {
+                                Log::warning("MicroCRUD: Method '{$relationMethod}' is not a valid Eloquent relation on model " . get_class($currentModel));
+                                $isValidRelation = false;
+                                break;
+                            }
+
+                            $relationPath[] = $relationName;
+                            $currentModel = $relation->getRelated();
+
+                        } catch (\Exception $e) {
+                            Log::warning("MicroCRUD: Failed to load relation '{$relationMethod}': {$e->getMessage()}");
+                            $isValidRelation = false;
+                            break;
+                        }
+                    }
+
+                    if ($isValidRelation && !empty($relationPath)) {
+                        // Get the column name (last part)
+                        $columnName = end($parts);
+
+                        // Validate column exists on related model
+                        $relatedColumns = $this->getModelColumns($currentModel);
+                        if (!in_array($columnName, $relatedColumns)) {
+                            Log::warning("MicroCRUD: Column '{$columnName}' does not exist on related model " . get_class($currentModel));
+                            continue;
+                        }
+
+                        // Build the full relation path for eager loading
+                        $fullRelationPath = implode('.', $relationPath);
+                        $relationsToLoad[] = $fullRelationPath;
+
+                        // For joins, we need to handle the last relation
+                        $lastRelation = end($relationPath);
+                        $lastRelationMethod = Str::camel($lastRelation);
+
+                        try {
+                            // Get relation instance to determine join details
+                            $relationInstance = null;
+                            $tempModel = $this->model;
+
+                            // Navigate through nested relations
+                            foreach ($relationPath as $relName) {
+                                $relMethod = Str::camel($relName);
+                                $relationInstance = (new $tempModel)->{$relMethod}();
+                                $tempModel = $relationInstance->getRelated();
+                            }
+
+                            if ($relationInstance) {
+                                $relatedTable = $relationInstance->getRelated()->getTable();
+                                $foreignKey = $relationInstance->getForeignKeyName();
+                                $ownerKey = $relationInstance->getOwnerKeyName();
+
+                                // Apply join if not already joined
+                                $joins = collect($query->getQuery()->joins ?? []);
+                                $alreadyJoined = $joins->contains(function ($join) use ($relatedTable) {
+                                    return $join->table === $relatedTable;
+                                });
+
+                                if (!$alreadyJoined) {
+                                    // Handle BelongsTo vs HasMany/HasOne differently
+                                    if ($relationInstance instanceof \Illuminate\Database\Eloquent\Relations\BelongsTo) {
+                                        $query->leftJoin(
+                                            $relatedTable,
+                                            "{$modelTableName}.{$foreignKey}",
+                                            '=',
+                                            "{$relatedTable}.{$ownerKey}"
+                                        );
+                                    } else {
+                                        // HasMany, HasOne, etc.
+                                        $query->leftJoin(
+                                            $relatedTable,
+                                            "{$relatedTable}.{$foreignKey}",
+                                            '=',
+                                            "{$modelTableName}.{$ownerKey}"
+                                        );
+                                    }
+                                }
+
+                                // Add qualified column to GROUP BY
+                                $groupByColumns[] = "{$relatedTable}.{$columnName}";
+                            }
+                        } catch (\Exception $e) {
+                            Log::warning("MicroCRUD: Failed to apply join for relation '{$fullRelationPath}': {$e->getMessage()}");
+                        }
+                    }
+                }
+            } else {
+                // Direct column on the model
+                if (in_array($groupColumn, $modelColumns)) {
+                    // Use qualified column name to avoid ambiguity
+                    $groupByColumns[] = "{$modelTableName}.{$groupColumn}";
+                } else {
+                    Log::warning("MicroCRUD: Column '{$groupColumn}' does not exist on model table '{$modelTableName}'");
+                }
+            }
+        }
+
+        // Apply group-specific filters (search/pagination within groups)
+        if (!empty($groupFilters)) {
+            // Check if we need window function-based pagination (limit per group)
+            $hasWithinGroupPagination = false;
+            $groupPaginationConfig = null;
+
+            foreach ($groupFilters as $columnName => $config) {
+                // Get qualified column name
+                $qualifiedColumn = strpos($columnName, '.') !== false
+                    ? str_replace('.', '.', $columnName)
+                    : "{$modelTableName}.{$columnName}";
+
+                // Apply search filter if provided
+                if (!empty($config['search'])) {
+                    $searchValue = $config['search'];
+                    $query->where($qualifiedColumn, 'LIKE', "%{$searchValue}%");
+                }
+
+                // Check if this group needs within-group pagination
+                if (!empty($config['limit']) && empty($config['page'])) {
+                    // This is "top N per group" scenario - use window functions
+                    $hasWithinGroupPagination = true;
+                    $groupPaginationConfig = [
+                        'column' => $columnName,
+                        'limit' => $config['limit'],
+                        'order_by' => $config['order_by'] ?? 'id',
+                        'order_direction' => $config['order_direction'] ?? 'asc',
+                        'is_all' => $config['is_all'] ?? false,
+                    ];
+                    break; // Only support one window function group at a time
+                } elseif (!empty($config['page']) || !empty($config['limit'])) {
+                    // This is regular pagination but on grouped results
+                    Log::info("MicroCRUD: Regular pagination on grouped data for '{$columnName}'. Groups will be paginated normally.");
+                }
+            }
+
+            // If we need window function pagination, clear GROUP BY and use window functions instead
+            if ($hasWithinGroupPagination && $groupPaginationConfig) {
+                // Clear the group by since we're using window functions
+                $groupByColumns = [];
+
+                // Apply the grouped pagination
+                return $this->applyGroupedPagination($query, $groupPaginationConfig);
+            }
+        }
+
+        // Apply eager loading for relations
+        if (!empty($relationsToLoad)) {
+            $query->with(array_unique($relationsToLoad));
+        }
+
+        // Apply GROUP BY if we have valid columns
+        if (!empty($groupByColumns)) {
+            // Check if user wants specific aggregate selection (first, last, max, min)
+            // Support both top-level parameters and inline syntax within group configs
+            $groupAggregate = $data['group_aggregate'] ?? null;
+            $groupOrderBy = $data['group_order_by'] ?? null;
+            $groupOrderDirection = $data['group_order_direction'] ?? 'asc';
+
+            // Check for inline ordering syntax in group configs (e.g., 'order_by_created_at': 'desc')
+            if (!$groupOrderBy && !empty($groupFilters)) {
+                foreach ($groupFilters as $columnName => $config) {
+                    if (is_array($config)) {
+                        foreach ($config as $configKey => $configValue) {
+                            // Check if key matches pattern 'order_by_*'
+                            if (strpos($configKey, 'order_by_') === 0) {
+                                $orderColumnName = substr($configKey, 9); // Remove 'order_by_' prefix
+                                $groupOrderBy = $orderColumnName;
+                                $groupOrderDirection = strtolower($configValue); // 'asc' or 'desc'
+                                break 2; // Exit both foreach loops
+                            }
+                        }
+                    }
+                }
+            }
+
+            // For deterministic GROUP BY results, we need to use window functions or subqueries
+            // to select specific records (first, last, max, min) per group
+            if ($groupAggregate || $groupOrderBy) {
+                // Use subquery with ROW_NUMBER to select specific record per group
+                $orderColumn = $groupOrderBy ?? $this->model->getKeyName();
+                $orderDirection = $groupOrderDirection;
+
+                // Determine which row to select based on aggregate
+                if ($groupAggregate === 'last' || $groupAggregate === 'max') {
+                    $orderDirection = 'desc';
+                }
+
+                // Build subquery with ROW_NUMBER
+                $partitionColumns = implode(', ', $groupByColumns);
+
+                $subQuery = $this->model::selectRaw(
+                    "{$modelTableName}.*, ROW_NUMBER() OVER (PARTITION BY {$partitionColumns} ORDER BY {$modelTableName}.{$orderColumn} {$orderDirection}) as rn"
+                );
+
+                // Apply existing query conditions to subquery
+                $bindings = $query->getBindings();
+                $wheres = $query->getQuery()->wheres;
+
+                if (!empty($wheres)) {
+                    foreach ($wheres as $where) {
+                        if ($where['type'] === 'Basic') {
+                            $subQuery->where($where['column'], $where['operator'], $where['value']);
+                        }
+                    }
+                }
+
+                // Wrap in outer query to filter by row number = 1
+                $query = $this->model::fromSub($subQuery, $modelTableName)
+                    ->where('rn', '=', 1)
+                    ->select("{$modelTableName}.*");
+
+                // Re-apply eager loading on the new query
+                if (!empty($relationsToLoad)) {
+                    $query->with(array_unique($relationsToLoad));
+                }
+
+                $this->setQuery($query);
+                return $query;
+            }
+
+            // Default GROUP BY behavior (first row encountered - non-deterministic)
+            $query->groupBy($groupByColumns);
+
+            // When grouping, we typically want to select the grouped columns
+            // and optionally aggregate functions. Let's select the main model columns
+            // and the grouped columns to avoid SQL errors
+            $selectColumns = ["{$modelTableName}.*"];
+
+            // Add relation columns to select
+            foreach ($groupByColumns as $groupCol) {
+                if (strpos($groupCol, '.') !== false) {
+                    $selectColumns[] = $groupCol;
+                }
+            }
+
+            $query->select($selectColumns);
+        }
+
+        return $query;
+    }
+
     public function applyDynamicFilters($query, $data = [])
     {
         $query = $this->applyDynamicSearchFilters($query, $data);
         $query = $this->applyDynamicOrderFilters($query, $data);
+        $query = $this->applyDynamicGroupBy($query, $data);
         return $query;
+    }
+
+    /**
+     * Build hierarchical grouped response structure.
+     *
+     * Transforms flat grouped data into nested parent-child structure based on group columns.
+     *
+     * Example: group_bies = ['block.manager_id', 'block_id']
+     * Creates nested structure: Managers → Blocks → Apartments
+     *
+     * @param array $items Flat grouped items
+     * @param array $groupColumns Group column configuration
+     * @param array $options Options: ['hierarchical' => bool, 'paginate' => bool, 'per_page' => int, 'exclude_relations' => array]
+     * @return array Hierarchical grouped structure or flat data
+     */
+    public function buildHierarchicalGroupedResponse($items, $groupColumns = [], $options = [])
+    {
+        if (empty($groupColumns)) {
+            $data = $this->getData();
+            $groupColumns = $data['group_bies'] ?? [];
+        }
+
+        if (empty($groupColumns)) {
+            return $items;
+        }
+
+        $useHierarchical = $options['hierarchical'] ?? false;
+
+        // If not hierarchical, return flat grouped data
+        if (!$useHierarchical) {
+            return $items;
+        }
+
+        $paginate = $options['paginate'] ?? false;
+        $perPage = $options['per_page'] ?? 10;
+
+        // NEW: Auto-exclude parent relations by default, unless include_relations is specified
+        $includeRelations = $options['include_relations'] ?? [];
+        $autoExcludeRelations = [];
+
+        // Parse group columns to determine hierarchy and auto-detect relations to exclude
+        $groupHierarchy = [];
+        foreach ($groupColumns as $key => $value) {
+            $column = is_numeric($key) ? $value : $key;
+            $config = is_numeric($key) ? null : (is_array($value) ? $value : null);
+
+            $groupHierarchy[] = ['column' => $column, 'config' => $config];
+
+            // Auto-detect relation names from group columns
+            if (strpos($column, '.') !== false) {
+                $parts = explode('.', $column);
+                // Extract base relation name (e.g., 'object' from 'object.manager_id')
+                $baseRelation = $parts[0];
+
+                // Only exclude if not explicitly included
+                if (!in_array($baseRelation, $includeRelations)) {
+                    $autoExcludeRelations[] = $baseRelation;
+                }
+            } else {
+                // For direct columns, check if there's a matching relation
+                // (e.g., 'object_id' → 'object' relation)
+                if (str_ends_with($column, '_id')) {
+                    $potentialRelation = str_replace('_id', '', $column);
+
+                    // Only exclude if not explicitly included
+                    if (!in_array($potentialRelation, $includeRelations)) {
+                        $autoExcludeRelations[] = $potentialRelation;
+                    }
+                }
+            }
+        }
+
+        // Remove duplicates
+        $excludeRelations = array_unique($autoExcludeRelations);
+
+        // Build hierarchical structure
+        return $this->buildNestedGroups($items, $groupHierarchy, 0, $excludeRelations, $paginate, $perPage);
+    }
+
+    /**
+     * Recursively build nested group structure.
+     *
+     * @param \Illuminate\Support\Collection|array $items Items to group
+     * @param array $groupHierarchy Group column hierarchy
+     * @param int $level Current hierarchy level
+     * @param array $excludeRelations Relations to exclude from leaf resources
+     * @param bool $paginate Whether to paginate at leaf level
+     * @param int $perPage Items per page
+     * @return array Nested structure
+     */
+    protected function buildNestedGroups($items, $groupHierarchy, $level, $excludeRelations, $paginate, $perPage)
+    {
+        // If no more levels, return leaf data
+        if ($level >= count($groupHierarchy)) {
+            $leafData = $this->excludeRelationsFromItems($items, $excludeRelations);
+
+            // Only add pagination if requested
+            if ($paginate) {
+                $collection = collect($items);
+                $page = request()->input("level_{$level}_page", request()->input('page', 1));
+                $paginated = new \Illuminate\Pagination\LengthAwarePaginator(
+                    $collection->forPage($page, $perPage),
+                    $collection->count(),
+                    $perPage,
+                    $page,
+                    ['path' => request()->url()]
+                );
+
+                return [
+                    'pagination' => [
+                        'current' => $paginated->currentPage(),
+                        'previous' => $paginated->currentPage() > 1 ? $paginated->currentPage() - 1 : 0,
+                        'next' => $paginated->hasMorePages() ? $paginated->currentPage() + 1 : 0,
+                        'perPage' => $paginated->perPage(),
+                        'totalPage' => $paginated->lastPage(),
+                        'totalItem' => $paginated->total(),
+                    ],
+                    'data' => $this->excludeRelationsFromItems($paginated->items(), $excludeRelations),
+                ];
+            }
+
+            // No pagination - return data directly
+            return $leafData;
+        }
+
+        $currentGroup = $groupHierarchy[$level];
+        $groupColumn = $currentGroup['column'];
+        $groupConfig = $currentGroup['config'];
+
+        // Extract relation name for grouping
+        $relationName = null;
+        $columnName = $groupColumn;
+
+        if (strpos($groupColumn, '.') !== false) {
+            $parts = explode('.', $groupColumn);
+            $columnName = end($parts);
+            $relationPath = implode('.', array_slice($parts, 0, -1));
+            $relationName = $relationPath;
+        }
+
+        // Group items by the current column
+        $grouped = collect($items)->groupBy(function ($item) use ($groupColumn, $relationName, $columnName) {
+            if ($relationName) {
+                // Navigate through nested relations
+                $value = $item;
+                foreach (explode('.', $relationName) as $rel) {
+                    $value = $value->{$rel} ?? null;
+                    if (!$value) return null;
+                }
+                return $value->{$columnName} ?? null;
+            }
+            return $item->{$groupColumn} ?? null;
+        })->filter(function ($value, $key) {
+            return $key !== null;
+        });
+
+        // Build result array with group metadata
+        $result = [];
+        foreach ($grouped as $groupValue => $groupItems) {
+            // Extract group metadata (parent relation data)
+            $groupData = $this->extractGroupData($groupItems->first(), $groupColumn, $relationName);
+
+            $groupNode = [
+                'group' => $groupData,
+            ];
+
+            // Determine if we should paginate at this level
+            $shouldPaginateThisLevel = false;
+            $thisLevelPerPage = $perPage;
+
+            if ($groupConfig && isset($groupConfig['page'])) {
+                // Group-specific pagination config
+                $shouldPaginateThisLevel = true;
+                $thisLevelPerPage = $groupConfig['limit'] ?? $perPage;
+            }
+
+            // Recursively process next level
+            $childData = $this->buildNestedGroups(
+                $groupItems,
+                $groupHierarchy,
+                $level + 1,
+                $excludeRelations,
+                $shouldPaginateThisLevel,
+                $thisLevelPerPage
+            );
+
+            // If child data has pagination, it's already structured
+            if (is_array($childData) && isset($childData['pagination'])) {
+                $groupNode['pagination'] = $childData['pagination'];
+                $groupNode['data'] = $childData['data'];
+            } else {
+                $groupNode['data'] = $childData;
+            }
+
+            // Add aggregations if configured
+            if ($groupConfig && !empty($groupConfig['aggregations'])) {
+                $groupNode['aggregations'] = $this->calculateAggregations($groupItems, $groupConfig['aggregations']);
+            }
+
+            $result[] = $groupNode;
+        }
+
+        // Apply global pagination at this level if requested (and not at leaf level)
+        if ($level === 0 && $paginate && count($groupHierarchy) > 1) {
+            // This is top-level pagination of groups
+            $collection = collect($result);
+            $page = request()->input('page', 1);
+            $paginated = new \Illuminate\Pagination\LengthAwarePaginator(
+                $collection->forPage($page, $perPage),
+                $collection->count(),
+                $perPage,
+                $page,
+                ['path' => request()->url()]
+            );
+
+            return [
+                'pagination' => [
+                    'current' => $paginated->currentPage(),
+                    'previous' => $paginated->currentPage() > 1 ? $paginated->currentPage() - 1 : 0,
+                    'next' => $paginated->hasMorePages() ? $paginated->currentPage() + 1 : 0,
+                    'perPage' => $paginated->perPage(),
+                    'totalPage' => $paginated->lastPage(),
+                    'totalItem' => $paginated->total(),
+                ],
+                'data' => $paginated->items(),
+            ];
+        }
+
+        return $result;
+    }
+
+    /**
+     * Extract group metadata from an item.
+     *
+     * @param mixed $item Source item
+     * @param string $groupColumn Group column name
+     * @param string|null $relationName Relation name if grouping by relation
+     * @return array Group metadata
+     */
+    protected function extractGroupData($item, $groupColumn, $relationName)
+    {
+        if ($relationName) {
+            // Get the relation data
+            $relationData = $item;
+            foreach (explode('.', $relationName) as $rel) {
+                $relationData = $relationData->{$rel} ?? null;
+                if (!$relationData) break;
+            }
+
+            if ($relationData) {
+                // Return relation data as array
+                $resource = $this->getItemResource();
+                return (new $resource($relationData))->toArray(request());
+            }
+        }
+
+        // For direct column grouping, return just the value
+        return [
+            $groupColumn => $item->{$groupColumn} ?? null,
+        ];
+    }
+
+    /**
+     * Exclude specified relations from items to prevent duplication.
+     *
+     * @param array|\Illuminate\Support\Collection $items Items
+     * @param array $excludeRelations Relations to exclude
+     * @return array Items without excluded relations
+     */
+    protected function excludeRelationsFromItems($items, $excludeRelations)
+    {
+        if (empty($excludeRelations)) {
+            $resource = $this->getItemResource();
+            return collect($items)->map(function ($item) use ($resource) {
+                return (new $resource($item))->toArray(request());
+            })->toArray();
+        }
+
+        $resource = $this->getItemResource();
+        return collect($items)->map(function ($item) use ($excludeRelations, $resource) {
+            $data = (new $resource($item))->toArray(request());
+
+            // Remove excluded relations
+            foreach ($excludeRelations as $relation) {
+                unset($data[$relation]);
+            }
+
+            return $data;
+        })->toArray();
+    }
+
+    /**
+     * Calculate aggregations for a group.
+     *
+     * @param \Illuminate\Support\Collection $items Items in group
+     * @param array $aggregations Aggregation config: ['count' => true, 'sum' => ['price'], 'avg' => ['price']]
+     * @return array Calculated aggregations
+     */
+    protected function calculateAggregations($items, $aggregations)
+    {
+        $result = [];
+
+        if (!empty($aggregations['count'])) {
+            $result['count'] = $items->count();
+        }
+
+        if (!empty($aggregations['sum'])) {
+            foreach ($aggregations['sum'] as $column) {
+                $result["sum_{$column}"] = $items->sum($column);
+            }
+        }
+
+        if (!empty($aggregations['avg'])) {
+            foreach ($aggregations['avg'] as $column) {
+                $result["avg_{$column}"] = $items->avg($column);
+            }
+        }
+
+        if (!empty($aggregations['max'])) {
+            foreach ($aggregations['max'] as $column) {
+                $result["max_{$column}"] = $items->max($column);
+            }
+        }
+
+        if (!empty($aggregations['min'])) {
+            foreach ($aggregations['min'] as $column) {
+                $result["min_{$column}"] = $items->min($column);
+            }
+        }
+
+        return $result;
     }
 }

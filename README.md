@@ -19,7 +19,8 @@ Stop writing the same CRUD logic over and over. MicroCRUD provides:
 
 - ⚡ **Rapid Development** - Create full CRUD APIs with just 3 classes
 - 🎯 **Type-Aware Filtering** - Automatic search filters based on database column types
-- 🔍 **Advanced Querying** - Range filters, dynamic sorting, soft deletes, pagination
+- 🔍 **Advanced Querying** - Range filters, dynamic sorting, grouping, soft deletes, pagination
+- 📊 **Dynamic Grouping** - Group by model columns or relations with auto-joins and eager loading
 - ✅ **Auto Validation** - Generate validation rules from database schema
 - 💾 **Smart Caching** - Tag-based cache with automatic invalidation
 - 🚀 **Queue Support** - Background processing for heavy operations
@@ -403,6 +404,336 @@ GET /products?search_by_is_active=1
 GET /products?order_by_price=asc
 GET /products?order_by_created_at=desc
 GET /products?order_by_name=asc&order_by_price=desc
+```
+
+#### Dynamic Grouping
+Group results by model columns or relation columns:
+
+**Simple Grouping:**
+```http
+# Group by single column
+POST /apartments/index
+{
+  "group_bies": ["object_id"]
+}
+# SELECT apartments.* FROM apartments GROUP BY apartments.object_id
+
+# Group by multiple columns
+POST /apartments/index
+{
+  "group_bies": ["object_id", "block_id"]
+}
+# SELECT apartments.* FROM apartments GROUP BY apartments.object_id, apartments.block_id
+
+# Group by relation column (automatically joins and eager loads)
+POST /apartments/index
+{
+  "group_bies": ["block.manager_id"]
+}
+# SELECT apartments.*, blocks.manager_id
+# FROM apartments
+# LEFT JOIN blocks ON apartments.block_id = blocks.id
+# GROUP BY blocks.manager_id
+```
+
+**Grouped Pagination (Top N per Group):**
+```http
+# Get first 10 apartments per block (using window functions)
+POST /apartments/index
+{
+  "group_bies": {
+    "block_id": {
+      "limit": 10,
+      "order_by": "created_at",
+      "order_direction": "desc"
+    }
+  }
+}
+# Uses ROW_NUMBER() OVER (PARTITION BY block_id ORDER BY created_at DESC)
+# Returns max 10 apartments per block
+
+# Get top 5 highest-priced apartments per object
+POST /apartments/index
+{
+  "group_bies": {
+    "object_id": {
+      "limit": 5,
+      "order_by": "price",
+      "order_direction": "desc"
+    }
+  }
+}
+
+# Get first 3 apartments per manager (relation-based grouping)
+POST /apartments/index
+{
+  "group_bies": {
+    "block.manager_id": {
+      "limit": 3,
+      "search": "John",
+      "order_by": "id"
+    }
+  }
+}
+```
+
+**Mixed Syntax (Simple + Configured):**
+```http
+POST /apartments/index
+{
+  "group_bies": {
+    "object_id": {
+      "limit": 10,
+      "search": "Building A"
+    },
+    "status": null,
+    "block_id": null
+  }
+}
+```
+
+**Features:**
+- ✅ **Simple GROUP BY** - For aggregations and unique value queries
+- ✅ **Top N per Group** - Get first/last/top N records per group using window functions
+- ✅ **Hierarchical Responses** - Nested parent-child structure with `hierarchical: true`
+- ✅ **Relation Support** - Group by relation columns (e.g., `block.manager_id`)
+- ✅ **Auto JOIN & Eager Load** - Automatically joins and eager loads relations
+- ✅ **Search within Groups** - Filter specific groups with search parameter
+- ✅ **Nested Relations** - Supports multi-level relations (e.g., `block.manager.department_id`)
+- ✅ **Relation Exclusion** - Prevent duplicate data with `exclude_relations` parameter
+- ✅ **Validates Everything** - Checks columns and relations exist
+- ✅ **Database Agnostic** - Works with MySQL 8+, PostgreSQL, SQL Server
+
+**Response Structure:**
+
+The response format depends on whether `hierarchical` is enabled:
+
+**1. Flat Grouped Response (hierarchical: false or not set)**
+
+**Basic (returns first record per group - non-deterministic):**
+```json
+POST /apartments/index
+{
+  "group_bies": ["object_id"],
+  "page": 1,
+  "limit": 10
+}
+```
+
+**With Aggregate Selection (deterministic):**
+
+Method 1: Top-level parameters
+```json
+POST /apartments/index
+{
+  "group_bies": ["object_id"],
+  "group_order_by": "created_at",
+  "group_order_direction": "desc",
+  "page": 1,
+  "limit": 10
+}
+```
+
+Method 2: Inline syntax (recommended)
+```json
+POST /apartments/index
+{
+  "group_bies": {
+    "object_id": {
+      "order_by_created_at": "desc"
+    }
+  },
+  "page": 1,
+  "limit": 10
+}
+```
+Both return **newest apartment per object**
+
+**Or use group_aggregate shortcuts:**
+```json
+{
+  "group_bies": ["object_id"],
+  "group_aggregate": "last",
+  "group_order_by": "id"
+}
+```
+- `first`: First record (ORDER BY column ASC, get first)
+- `last`: Last record (ORDER BY column DESC, get first)
+- `max`: Max value (ORDER BY column DESC, get first)
+- `min`: Min value (ORDER BY column ASC, get first)
+
+**Response (flat list with standard pagination):**
+```json
+{
+  "pagination": {
+    "current": 1,
+    "totalPage": 10,
+    "totalItem": 100
+  },
+  "data": [
+    {
+      "id": 45,
+      "name": "Apartment 1-Z",
+      "object_id": 1,
+      "created_at": "2025-01-29 14:20:00",
+      "object": {
+        "id": 1,
+        "name": "Sunrise Apartments"
+      }
+    },
+    {
+      "id": 89,
+      "name": "Apartment 2-Y",
+      "object_id": 2,
+      "created_at": "2025-01-28 09:15:00",
+      "object": {
+        "id": 2,
+        "name": "Sunset Towers"
+      }
+    }
+    // ... 8 more apartments (newest per unique object_id)
+  ]
+}
+```
+
+**2. Hierarchical Grouped Response (hierarchical: true)**
+
+Basic example:
+```json
+POST /apartments/index
+{
+  "group_bies": ["object_id"],
+  "hierarchical": true,
+  "page": 1,
+  "limit": 10
+}
+```
+
+With aggregations and inline ordering:
+```json
+POST /apartments/index
+{
+  "group_bies": {
+    "block.manager_id": {
+      "aggregations": {
+        "count": true,
+        "sum": ["price"],
+        "avg": ["price"]
+      },
+      "order_by_sold_at": "desc"
+    }
+  },
+  "hierarchical": true,
+  "page": 1,
+  "limit": 10
+}
+```
+
+Returns nested structure (group → children):
+```json
+{
+  "pagination": {
+    "current": 1,
+    "totalPage": 5,
+    "totalItem": 48
+  },
+  "data": [
+    {
+      "group": {
+        "id": 1,
+        "name": "Sunrise Apartments"
+      },
+      "data": [
+        {"id": 1, "name": "Apartment 1-A"},
+        {"id": 2, "name": "Apartment 1-B"},
+        {"id": 3, "name": "Apartment 1-C"}
+        // ALL apartments in this object (object relation auto-excluded)
+      ]
+    },
+    {
+      "group": {
+        "id": 2,
+        "name": "Sunset Towers"
+      },
+      "data": [
+        {"id": 15, "name": "Apartment 2-A"}
+      ]
+    }
+    // ... 8 more objects (10 groups total)
+  ]
+}
+```
+
+**Comparison Table:**
+
+| Feature | Flat (hierarchical: false) | Hierarchical (hierarchical: true) |
+|---------|---------------------------|----------------------------------|
+| **Structure** | `[{...}, {...}]` | `[{group: {...}, data: [...]}, ...]` |
+| **Parent Data** | Repeated in each record | Once per group |
+| **Records per Group** | 1 (configurable with `group_aggregate`) | ALL |
+| **Pagination** | Paginates individual records | Paginates groups |
+| **Relations** | Included (normal behavior) | Auto-excluded from children |
+| **Aggregate Selection** | ✅ `group_aggregate`, `group_order_by` | N/A |
+| **Use Case** | Standard listing, latest/oldest per group | Parent-child navigation |
+| **Performance** | Good for simple lists | Better for complex hierarchies |
+
+**3. With Aggregation** - Add `selectRaw()` in `beforeIndex()` for COUNT/SUM/AVG/MAX/MIN
+**4. Top N per Group** - Use window functions (see Performance Guide)
+**5. With Relations** - Automatically eager loads relations (no N+1)
+
+```php
+// Example: Add aggregation for grouped queries
+class ApartmentService extends Service
+{
+    public function beforeIndex()
+    {
+        $data = $this->getData();
+        $query = $this->getQuery();
+
+        if (!empty($data['group_bies'])) {
+            $table = $this->getModelTableName();
+            $query->selectRaw("COUNT(*) as apartment_count")
+                  ->selectRaw("SUM(price) as total_value")
+                  ->selectRaw("AVG(price) as avg_price");
+        }
+
+        $this->setQuery($query);
+        return parent::beforeIndex();
+    }
+}
+```
+
+**Example Response (with aggregation):**
+```json
+{
+  "data": [
+    {
+      "object_id": 101,
+      "apartment_count": 45,
+      "total_value": 15750000,
+      "avg_price": 350000
+    }
+  ]
+}
+```
+
+**Example Model Setup:**
+```php
+class Apartment extends Model
+{
+    public function block()
+    {
+        return $this->belongsTo(Block::class);
+    }
+}
+
+class Block extends Model
+{
+    public function manager()
+    {
+        return $this->belongsTo(User::class, 'manager_id');
+    }
+}
 ```
 
 #### Pagination
@@ -1423,6 +1754,11 @@ composer install
 ### [Latest] - 2025-01-30
 
 #### Added
+- ✨ **Dynamic Grouping (group_bies)** - Group results by model columns or relations with auto-joins and eager loading
+- ✨ **Grouped Pagination** - "Top N per Group" queries using window functions (ROW_NUMBER OVER PARTITION BY)
+- ✨ **Hierarchical Grouped Responses** - Nested parent-child structure with pagination at each level (`hierarchical: true`)
+- ✨ **Relation Exclusion** - Prevent duplicate relation data in leaf resources (`exclude_relations` parameter)
+- ✨ **Group Aggregations** - Calculate COUNT/SUM/AVG/MAX/MIN per group level
 - ✨ **Route Macros** - `Route::microcrud()` and `Route::microcruds()` for easy resource registration
 - ✨ **Enhanced Exceptions** - Rich error context with toArray()/toJson() methods
 - ✨ **Improved Middlewares** - Better security, logging, and validation
