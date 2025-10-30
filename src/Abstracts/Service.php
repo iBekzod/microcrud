@@ -21,95 +21,271 @@ use Microcrud\Abstracts\Exceptions\UpdateException;
 use Microcrud\Abstracts\Exceptions\NotFoundException;
 use Microcrud\Abstracts\Exceptions\ValidationException;
 
+/**
+ * Service
+ *
+ * Abstract service class providing comprehensive CRUD operations with advanced features:
+ * - Database transactions with configurable control
+ * - Intelligent caching with Redis/Memcached tagging support
+ * - Background job processing for async operations
+ * - Dynamic filtering and ordering (search_by_*, order_by_*)
+ * - Soft delete support
+ * - Multi-database support (MySQL, PostgreSQL, SQLite, SQL Server)
+ * - Automatic validation rule generation based on model columns
+ * - Bulk operations (create, update, delete, restore)
+ * - Hook system (before/after operations)
+ * - Automatic cache invalidation on data changes
+ *
+ * @package Microcrud\Abstracts
+ */
 abstract class Service implements ServiceInterface
 {
+    /**
+     * The Eloquent model instance being operated on
+     *
+     * @var \Illuminate\Database\Eloquent\Model
+     */
     public $model;
+
+    /**
+     * Request data array for current operation
+     *
+     * @var array
+     */
     protected $data = [];
+
+    /**
+     * Primary key column name (default: 'id')
+     *
+     * @var string
+     */
     protected $private_key_name = 'id';
 
+    /**
+     * Flag indicating if current operation is running as background job
+     *
+     * @var bool
+     */
     protected $is_job = false;
 
+    /**
+     * Custom query builder instance
+     *
+     * @var \Illuminate\Database\Eloquent\Builder|null
+     */
     protected $query = null;
+
+    /**
+     * API resource class for response formatting
+     *
+     * @var string
+     */
     protected $resource = null;
+
+    /**
+     * Enable/disable caching for queries
+     *
+     * @var bool
+     */
     protected $is_cacheable = false;
+
+    /**
+     * Enable/disable automatic database transactions
+     *
+     * @var bool
+     */
     protected $is_transaction_enabled = true;
+
+    /**
+     * Enable/disable pagination for index queries
+     *
+     * @var bool
+     */
     protected $is_paginated = true;
+
+    /**
+     * Cache expiration time (Carbon instance)
+     *
+     * @var \Illuminate\Support\Carbon|null
+     */
     protected $cache_expires_at = null;
+
+    /**
+     * Flag to replace or merge custom validation rules
+     *
+     * @var bool
+     */
     protected $is_replace_rules = false;
 
-    protected $rules = [];
-    protected $extra_data = [];
-    protected $items;
-    protected static $columnTypesCache = [];
     /**
-     * Class constructor.
+     * Custom validation rules
+     *
+     * @var array
+     */
+    protected $rules = [];
+
+    /**
+     * Additional data to include in responses (e.g., counts, metadata)
+     *
+     * @var array
+     */
+    protected $extra_data = [];
+
+    /**
+     * Collection of items (paginated or all)
+     *
+     * @var \Illuminate\Support\Collection|\Illuminate\Pagination\LengthAwarePaginator|null
+     */
+    protected $items;
+
+    /**
+     * Static cache for database column types to avoid repeated queries
+     *
+     * @var array
+     */
+    protected static $columnTypesCache = [];
+
+    /**
+     * Service constructor.
+     *
+     * Initializes service with model and resource class.
+     * Sets default cache expiration to 1 day.
+     *
+     * @param \Illuminate\Database\Eloquent\Model|null $model The Eloquent model instance
+     * @param string|null $resource API resource class for formatting responses
      */
     public function __construct($model = null, $resource = null)
     {
         $this->model = $model;
         $this->cache_expires_at = Carbon::now()->addDay();
-        $this->resource = (isset($resource)) ? $resource : ItemResource::class;
+        $this->resource = $resource ?? ItemResource::class;
     }
+    /**
+     * Set the primary key column name.
+     *
+     * @param string $private_key_name Column name (e.g., 'id', 'uuid')
+     * @return $this
+     */
     public function setPrivateKeyName($private_key_name)
     {
         $this->private_key_name = $private_key_name;
         return $this;
     }
 
+    /**
+     * Get the primary key column name.
+     *
+     * @return string
+     */
     public function getPrivateKeyName()
     {
         return $this->private_key_name;
     }
 
+    /**
+     * Check if caching is enabled.
+     *
+     * @return bool
+     */
     public function getIsCacheable()
     {
         return $this->is_cacheable;
     }
 
+    /**
+     * Enable or disable caching for this service.
+     *
+     * @param bool $is_cacheable
+     * @return $this
+     */
     public function setIsCacheable($is_cacheable = true)
     {
         $this->is_cacheable = $is_cacheable;
         return $this;
     }
 
+    /**
+     * Get extra metadata to include in API responses.
+     *
+     * @return array
+     */
     public function getExtraData()
     {
         return $this->extra_data;
     }
 
+    /**
+     * Set extra metadata for API responses (e.g., counts, statistics).
+     *
+     * @param array $extra_data
+     * @return $this
+     */
     public function setExtraData($extra_data = [])
     {
         $this->extra_data = $extra_data;
         return $this;
     }
 
+    /**
+     * Check if automatic database transactions are enabled.
+     *
+     * @return bool
+     */
     public function getIsTransactionEnabled()
     {
         return $this->is_transaction_enabled;
     }
 
+    /**
+     * Enable or disable automatic database transactions.
+     *
+     * @param bool $is_transaction_enabled
+     * @return $this
+     */
     public function setIsTransactionEnabled($is_transaction_enabled = true)
     {
         $this->is_transaction_enabled = $is_transaction_enabled;
         return $this;
     }
+
+    /**
+     * Check if pagination is enabled for index queries.
+     *
+     * @return bool
+     */
     public function getIsPaginated()
     {
         return $this->is_paginated;
     }
 
+    /**
+     * Enable or disable pagination for index queries.
+     *
+     * @param bool $is_paginated
+     * @return $this
+     */
     public function setIsPaginated($is_paginated = true)
     {
         $this->is_paginated = $is_paginated;
         return $this;
     }
 
-
+    /**
+     * Get cache expiration time.
+     *
+     * @return \Illuminate\Support\Carbon|null
+     */
     public function getCacheExpiresAt()
     {
         return $this->cache_expires_at;
     }
 
+    /**
+     * Set cache expiration time.
+     *
+     * @param \Illuminate\Support\Carbon $time
+     * @return $this
+     */
     public function setCacheExpiresAt($time)
     {
         $this->cache_expires_at = $time;
@@ -236,7 +412,10 @@ abstract class Service implements ServiceInterface
     }
 
     /**
-     * @throws NotFoundException
+     * Get the current model instance.
+     *
+     * @return \Illuminate\Database\Eloquent\Model
+     * @throws NotFoundException If model is not set
      */
     public function get()
     {
@@ -246,21 +425,49 @@ abstract class Service implements ServiceInterface
         return $this->model;
     }
 
+    /**
+     * Get the query builder instance.
+     *
+     * Returns custom query if set, otherwise creates new query from model.
+     *
+     * @return \Illuminate\Database\Eloquent\Builder
+     */
     public function getQuery()
     {
-        return ($this->query) ? $this->query : $this->model::query();
+        return $this->query ?? $this->model::query();
     }
 
+    /**
+     * Set a custom query builder instance.
+     *
+     * Useful for applying custom scopes or joins before operations.
+     *
+     * @param \Illuminate\Database\Eloquent\Builder $query
+     * @return $this
+     */
     public function setQuery($query)
     {
         $this->query = $query;
         return $this;
     }
+
+    /**
+     * Get custom validation rules.
+     *
+     * @return array
+     */
     public function getRules()
     {
         return $this->rules;
     }
 
+    /**
+     * Set custom validation rules.
+     *
+     * @param array $rules Validation rules array
+     * @param bool $is_replace_rules If true, replaces default rules; if false, merges with defaults
+     * @return $this
+     */
     public function setRules($rules, $is_replace_rules = false)
     {
         $this->rules = $rules;
@@ -269,7 +476,11 @@ abstract class Service implements ServiceInterface
     }
 
     /**
-     * @throws NotFoundException
+     * Set the model instance for current operation.
+     *
+     * @param \Illuminate\Database\Eloquent\Model $model
+     * @return $this
+     * @throws NotFoundException If model is null
      */
     public function set($model)
     {
@@ -282,7 +493,14 @@ abstract class Service implements ServiceInterface
     }
 
     /**
-     * @throws NotFoundException
+     * Load a model by its primary key with optional caching.
+     *
+     * Fetches model from database or cache based on primary key value in $data.
+     * Supports cache tagging for Redis/Memcached and fallback for other drivers.
+     *
+     * @param array $data Data array containing primary key (e.g., ['id' => 1])
+     * @return $this
+     * @throws NotFoundException If primary key not found in data or model not found in database
      */
     public function setById($data = [])
     {
@@ -334,7 +552,10 @@ abstract class Service implements ServiceInterface
     }
 
     /**
-     * @throws NotFoundException
+     * Get the current request data array.
+     *
+     * @return array
+     * @throws NotFoundException If data is not set
      */
     public function getData()
     {
@@ -343,8 +564,13 @@ abstract class Service implements ServiceInterface
         }
         return $this->data;
     }
+
     /**
-     * @throws NotFoundException
+     * Set request data for current operation.
+     *
+     * @param array $data Request data (e.g., from request()->all())
+     * @return $this
+     * @throws NotFoundException If data is null
      */
     public function setData($data)
     {
@@ -357,23 +583,47 @@ abstract class Service implements ServiceInterface
         return $this;
     }
 
-
+    /**
+     * Get the collection of items (from index/paginated queries).
+     *
+     * @return \Illuminate\Support\Collection|\Illuminate\Pagination\LengthAwarePaginator|null
+     */
     public function getItems()
     {
         return $this->items;
     }
+
+    /**
+     * Set the collection of items.
+     *
+     * @param \Illuminate\Support\Collection|\Illuminate\Pagination\LengthAwarePaginator $items
+     * @return $this
+     */
     public function setItems($items)
     {
         $this->items = $items;
         return $this;
     }
+    /**
+     * Automatically add 'exists' validation rule for foreign key columns.
+     *
+     * Detects columns ending with '_id' or '_uuid' and adds exists validation
+     * by checking if a relationship method exists on the model.
+     *
+     * @param string $key Column name (e.g., 'user_id', 'post_uuid')
+     * @param string $rule Existing validation rule
+     * @return string Enhanced validation rule with exists check
+     */
     private function getRelationRule($key, $rule)
     {
         $relation_key_types = ['id', 'uuid'];
+
         foreach ($relation_key_types as $relation_key_type) {
             if (str_ends_with($key, '_' . $relation_key_type)) {
                 $relation_table = Str::plural(str_replace('_' . $relation_key_type, '', $key));
                 $relation = Str::camel(str_replace('_' . $relation_key_type, '', $key));
+
+                // Check if model has a relationship method
                 if (
                     method_exists($this->model, $relation)
                     && $this->model->{$relation}() instanceof \Illuminate\Database\Eloquent\Relations\Relation
@@ -382,12 +632,14 @@ abstract class Service implements ServiceInterface
                     $tableName = $this->getModelTableName($relation_model);
                     $schema = $relation_model->getConnectionName();
                     $relation_keys = $this->getModelColumns($relation_model);
+
                     if (in_array($key, $relation_keys)) {
                         $rule = $rule . "|exists:{$schema}.{$tableName},{$key}";
                     } else {
                         $rule = $rule . "|exists:{$schema}.{$tableName},{$relation_key_type}";
                     }
                 } else {
+                    // Fallback: Check if table exists by convention
                     try {
                         if (Schema::hasTable($relation_table)) {
                             $rule = $rule . "|exists:{$relation_table},{$relation_key_type}";
@@ -398,10 +650,19 @@ abstract class Service implements ServiceInterface
                 }
             }
         }
+
         return $rule;
     }
+
     /**
-     * @throws ValidationException
+     * Validate data against rules using Laravel validator.
+     *
+     * Merges custom rules with provided rules and validates data.
+     *
+     * @param array $data Data to validate
+     * @param array $rules Validation rules
+     * @return array Validated data
+     * @throws ValidationException If validation fails
      */
     public function globalValidation($data, $rules = [])
     {

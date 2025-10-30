@@ -6,6 +6,7 @@ use Illuminate\Support\ServiceProvider;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Route;
 use Microcrud\Middlewares\LogHttpRequest;
 use Microcrud\Middlewares\LocaleMiddleware;
 use Microcrud\Middlewares\TimezoneMiddleware;
@@ -19,6 +20,9 @@ class MicrocrudServiceProvider extends ServiceProvider
      */
     public function boot()
     {
+        // Register route macros
+        $this->registerRouteMacros();
+
         // Validate configuration on boot if enabled
         if (Config::get('microcrud.features.validate_on_boot', true)) {
             $this->validateConfiguration();
@@ -126,6 +130,46 @@ class MicrocrudServiceProvider extends ServiceProvider
         //            ]);
         //        }
 
+    }
+
+    /**
+     * Register Route macros for easy MicroCRUD resource registration.
+     *
+     * Provides two macros:
+     * - Route::microcrud($name, $controller) - Register single resource
+     * - Route::microcruds($resources) - Register multiple resources
+     *
+     * @return void
+     */
+    protected function registerRouteMacros()
+    {
+        // Single resource macro
+        Route::macro('microcrud', function ($name, $controller) {
+            Route::prefix($name)->group(function () use ($controller) {
+                Route::post('create', [$controller, 'create']);
+                Route::post('update', [$controller, 'update']);
+                Route::post('show', [$controller, 'show']);
+                Route::post('index', [$controller, 'index']);
+                Route::post('delete', [$controller, 'delete']);
+                Route::post('restore', [$controller, 'restore']);
+                Route::post('bulk-action', [$controller, 'bulkAction']);
+            });
+        });
+
+        // Multiple resources macro
+        Route::macro('microcruds', function (array $resources) {
+            foreach ($resources as $name => $controller) {
+                Route::prefix($name)->group(function () use ($controller) {
+                    Route::post('create', [$controller, 'create']);
+                    Route::post('update', [$controller, 'update']);
+                    Route::post('show', [$controller, 'show']);
+                    Route::post('index', [$controller, 'index']);
+                    Route::post('delete', [$controller, 'delete']);
+                    Route::post('restore', [$controller, 'restore']);
+                    Route::post('bulk-action', [$controller, 'bulkAction']);
+                });
+            }
+        });
     }
 
     /**

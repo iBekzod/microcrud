@@ -156,17 +156,38 @@ class ProductController extends CrudController
 
 ### Step 4: Register Routes
 
+**Option 1: Use Route Macros** (Recommended - all POST endpoints):
+
 ```php
 // routes/api.php
-Route::prefix('products')->group(function () {
-    Route::get('/', [ProductController::class, 'index']);
-    Route::get('/{id}', [ProductController::class, 'show']);
-    Route::post('/', [ProductController::class, 'create']);
-    Route::put('/{id}', [ProductController::class, 'update']);
-    Route::delete('/{id}', [ProductController::class, 'delete']);
-    Route::post('/{id}/restore', [ProductController::class, 'restore']);
-    Route::post('/bulk', [ProductController::class, 'bulkAction']);
-});
+
+// Single resource
+Route::microcrud('products', ProductController::class);
+
+// Multiple resources
+Route::microcruds([
+    'products' => ProductController::class,
+    'categories' => CategoryController::class,
+    'orders' => OrderController::class,
+]);
+```
+
+This creates 7 POST endpoints:
+- `POST /products/create` → create()
+- `POST /products/update` → update()
+- `POST /products/show` → show()
+- `POST /products/index` → index()
+- `POST /products/delete` → delete()
+- `POST /products/restore` → restore()
+- `POST /products/bulk-action` → bulkAction()
+
+**Option 2: RESTful Routes** (Standard Laravel):
+
+```php
+// routes/api.php
+Route::apiResource('products', ProductController::class);
+Route::post('products/{id}/restore', [ProductController::class, 'restore']);
+Route::post('products/bulk', [ProductController::class, 'bulkAction']);
 ```
 
 **That's it!** You now have a fully functional API with:
@@ -302,6 +323,40 @@ class ItemResource extends JsonResource
     }
 }
 ```
+
+## Route Macros
+
+MicroCRUD provides convenient Route macros for registering CRUD resources:
+
+```php
+// Single resource
+Route::microcrud('products', ProductController::class);
+
+// Multiple resources
+Route::microcruds([
+    'products' => ProductController::class,
+    'categories' => CategoryController::class,
+]);
+```
+
+**With Middleware & Prefix:**
+
+```php
+Route::prefix('v1')->middleware(['auth:api'])->group(function () {
+    Route::microcruds([
+        'products' => ProductController::class,
+        'orders' => OrderController::class,
+    ]);
+});
+```
+
+**Benefits:**
+- ✅ 75% less code than manual route definitions
+- ✅ Consistent pattern across all resources
+- ✅ Works with middleware, prefixes, and versioning
+- ✅ All POST endpoints (production-tested pattern)
+
+---
 
 ## Features
 
@@ -1365,30 +1420,27 @@ composer install
 
 ## Changelog
 
-### [Latest] - 2025-01-29
+### [Latest] - 2025-01-30
 
 #### Added
-- ✨ Type-aware dynamic search filters (min/max for numeric, from/to for dates)
-- ✨ `DeleteJob` for background deletion operations
-- ✨ Configurable timezone via `config('microcrud.timezone')`
-- 📚 Comprehensive Laravel-style documentation
-
-#### Fixed
-- 🐛 Removed non-existent class references in `ItemResource`
-- 🐛 Hardcoded timezone now uses configuration
-- 🐛 Validation rules now match column types
+- ✨ **Route Macros** - `Route::microcrud()` and `Route::microcruds()` for easy resource registration
+- ✨ **Enhanced Exceptions** - Rich error context with toArray()/toJson() methods
+- ✨ **Improved Middlewares** - Better security, logging, and validation
+- 📚 **Comprehensive Documentation** - Enhanced code documentation throughout
 
 #### Improved
-- ⚡ Better query performance documentation
-- 📝 Added N+1 query prevention guidelines
-- 🎨 Improved code organization and comments
+- ⚡ **Better Error Handling** - ValidationException, CreateException, UpdateException, DeleteException, NotFoundException
+- 📝 **Controller Documentation** - Full PHPDoc for all methods
+- 🎨 **Code Quality** - Better structure, logging, and maintainability
+- 🔒 **Security** - Sensitive data filtering in LogHttpRequest middleware
 
 ### Previous Releases
 
+- **Type-aware dynamic search filters** - min/max for numeric, from/to for dates
+- **DeleteJob** - Background deletion operations
+- **Configurable timezone** - Via `config('microcrud.timezone')`
 - **DYNAMIC search_by_column & order_by_column** - Added dynamic filtering
 - **Bulk actions** - Implemented bulk operations
-- **Service fixations** - Various service improvements
-- **Model changes** - Enhanced model functionality
 
 ## Security
 
