@@ -104,4 +104,23 @@ return [
         // Strict mode: throw exceptions instead of logging warnings
         'strict_mode' => false,
     ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Logging Configuration
+    |--------------------------------------------------------------------------
+    |
+    | Configure HTTP request logging behavior.
+    |
+    */
+    'logging' => [
+        // Log request headers
+        'log_headers' => false,
+
+        // Log request body
+        'log_body' => true,
+
+        // Log response body
+        'log_response' => false,
+    ],
 ];

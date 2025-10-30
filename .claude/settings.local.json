@@ -5,7 +5,9 @@
       "Bash(cat:*)",
       "Bash(php -l:*)",
       "Bash(docker-compose up:*)",
-      "Bash(docker-compose ps:*)"
+      "Bash(docker-compose ps:*)",
+      "Bash(docker-compose exec:*)",
+      "Bash(tee:*)"
     ],
     "deny": [],
     "ask": []
