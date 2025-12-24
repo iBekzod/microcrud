@@ -431,10 +431,17 @@ abstract class Service implements ServiceInterface
      * Returns custom query if set, otherwise creates new query from model.
      *
      * @return \Illuminate\Database\Eloquent\Builder
+     * @throws NotFoundException If model is not set
      */
     public function getQuery()
     {
-        return $this->query ?? $this->model::query();
+        if ($this->query !== null) {
+            return $this->query;
+        }
+        if (!isset($this->model)) {
+            throw new NotFoundException('Model is not set. Please set a model before calling getQuery().');
+        }
+        return $this->model->newQuery();
     }
 
     /**
