@@ -1041,9 +1041,9 @@ abstract class Service implements ServiceInterface
                 $this->setData($data);
             }
             $this->beforeBulkAction();
-            $total_count = 1;
-            $success_count = 0;
             $items = $this->composeItems();
+            $total_count = count($items);
+            $success_count = 0;
             $changed_items = collect();
             foreach ($items as $item) {
                 $this->setData($item);
@@ -1070,7 +1070,7 @@ abstract class Service implements ServiceInterface
                     }                    
                     $changed_items->push($model);
                 }else{
-                    throw new ValidationException("bulk_action parameter required with one of values:update or create for job!");
+                    throw new ValidationException("bulk_action parameter must be one of these actions: create, update, show, delete, restore", 422);
                 }
                 $success_count++;
             }

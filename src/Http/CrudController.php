@@ -134,12 +134,10 @@ abstract class CrudController extends ApiBaseController implements CrudBaseContr
      */
     public function create(Request $request)
     {
+        // Disable service-level transactions; controller manages transactions
         $this->service->setIsTransactionEnabled(false);
-        $useTransaction = !$this->service->getIsTransactionEnabled();
 
-        if ($useTransaction) {
-            DB::beginTransaction();
-        }
+        DB::beginTransaction();
 
         try {
             // Validate request data
@@ -153,10 +151,7 @@ abstract class CrudController extends ApiBaseController implements CrudBaseContr
                     ->setData($data)
                     ->createJob();
 
-                if ($useTransaction) {
-                    DB::commit();
-                }
-
+                DB::commit();
                 return $this->success();
             }
 
@@ -166,25 +161,16 @@ abstract class CrudController extends ApiBaseController implements CrudBaseContr
                 ->create()
                 ->get();
 
-            if ($useTransaction) {
-                DB::commit();
-            }
-
+            DB::commit();
             return $this->created($this->service->getItemResource(), $item);
         } catch (ValidationException $th) {
-            if ($useTransaction) {
-                DB::rollBack();
-            }
+            DB::rollBack();
             return $this->error($th->getMessage(), 422, $th);
         } catch (CreateException $th) {
-            if ($useTransaction) {
-                DB::rollBack();
-            }
+            DB::rollBack();
             return $this->errorBadRequest($th->getMessage(), $th);
         } catch (\Exception $th) {
-            if ($useTransaction) {
-                DB::rollBack();
-            }
+            DB::rollBack();
             return $this->errorBadRequest($th->getMessage(), $th);
         }
     }
@@ -199,12 +185,10 @@ abstract class CrudController extends ApiBaseController implements CrudBaseContr
      */
     public function update(Request $request)
     {
+        // Disable service-level transactions; controller manages transactions
         $this->service->setIsTransactionEnabled(false);
-        $useTransaction = !$this->service->getIsTransactionEnabled();
 
-        if ($useTransaction) {
-            DB::beginTransaction();
-        }
+        DB::beginTransaction();
 
         try {
             // Validate request data
@@ -219,10 +203,7 @@ abstract class CrudController extends ApiBaseController implements CrudBaseContr
                     ->setById()
                     ->updateJob();
 
-                if ($useTransaction) {
-                    DB::commit();
-                }
-
+                DB::commit();
                 return $this->success();
             }
 
@@ -233,30 +214,19 @@ abstract class CrudController extends ApiBaseController implements CrudBaseContr
                 ->update()
                 ->get();
 
-            if ($useTransaction) {
-                DB::commit();
-            }
-
+            DB::commit();
             return $this->accepted($this->service->getItemResource(), $item);
         } catch (ValidationException $th) {
-            if ($useTransaction) {
-                DB::rollBack();
-            }
+            DB::rollBack();
             return $this->error($th->getMessage(), 422, $th);
         } catch (UpdateException $th) {
-            if ($useTransaction) {
-                DB::rollBack();
-            }
+            DB::rollBack();
             return $this->errorBadRequest($th->getMessage(), $th);
         } catch (NotFoundException $th) {
-            if ($useTransaction) {
-                DB::rollBack();
-            }
+            DB::rollBack();
             return $this->errorNotFound($th->getMessage(), $th);
         } catch (\Exception $th) {
-            if ($useTransaction) {
-                DB::rollBack();
-            }
+            DB::rollBack();
             return $this->errorBadRequest($th->getMessage(), $th);
         }
     }
@@ -271,12 +241,10 @@ abstract class CrudController extends ApiBaseController implements CrudBaseContr
      */
     public function delete(Request $request)
     {
+        // Disable service-level transactions; controller manages transactions
         $this->service->setIsTransactionEnabled(false);
-        $useTransaction = !$this->service->getIsTransactionEnabled();
 
-        if ($useTransaction) {
-            DB::beginTransaction();
-        }
+        DB::beginTransaction();
 
         try {
             // Validate request data
@@ -295,25 +263,16 @@ abstract class CrudController extends ApiBaseController implements CrudBaseContr
                 ->setById()
                 ->delete();
 
-            if ($useTransaction) {
-                DB::commit();
-            }
-
+            DB::commit();
             return $this->noContent();
         } catch (ValidationException $th) {
-            if ($useTransaction) {
-                DB::rollBack();
-            }
+            DB::rollBack();
             return $this->error($th->getMessage(), 422, $th);
         } catch (NotFoundException $th) {
-            if ($useTransaction) {
-                DB::rollBack();
-            }
+            DB::rollBack();
             return $this->errorNotFound($th->getMessage(), $th);
         } catch (\Exception $th) {
-            if ($useTransaction) {
-                DB::rollBack();
-            }
+            DB::rollBack();
             return $this->errorBadRequest($th->getMessage(), $th);
         }
     }
@@ -328,12 +287,10 @@ abstract class CrudController extends ApiBaseController implements CrudBaseContr
      */
     public function restore(Request $request)
     {
+        // Disable service-level transactions; controller manages transactions
         $this->service->setIsTransactionEnabled(false);
-        $useTransaction = !$this->service->getIsTransactionEnabled();
 
-        if ($useTransaction) {
-            DB::beginTransaction();
-        }
+        DB::beginTransaction();
 
         try {
             // Validate request data
@@ -349,35 +306,22 @@ abstract class CrudController extends ApiBaseController implements CrudBaseContr
                 ->restore()
                 ->get();
 
-            if ($useTransaction) {
-                DB::commit();
-            }
-
+            DB::commit();
             return $this->accepted($this->service->getItemResource(), $item);
         } catch (ValidationException $th) {
-            if ($useTransaction) {
-                DB::rollBack();
-            }
+            DB::rollBack();
             return $this->error($th->getMessage(), 422, $th);
         } catch (NotFoundException $th) {
-            if ($useTransaction) {
-                DB::rollBack();
-            }
+            DB::rollBack();
             return $this->errorNotFound($th->getMessage(), $th);
         } catch (CreateException $th) {
-            if ($useTransaction) {
-                DB::rollBack();
-            }
+            DB::rollBack();
             return $this->errorBadRequest($th->getMessage(), $th);
         } catch (UpdateException $th) {
-            if ($useTransaction) {
-                DB::rollBack();
-            }
+            DB::rollBack();
             return $this->errorBadRequest($th->getMessage(), $th);
         } catch (\Exception $th) {
-            if ($useTransaction) {
-                DB::rollBack();
-            }
+            DB::rollBack();
             return $this->errorBadRequest($th->getMessage(), $th);
         }
     }
@@ -393,12 +337,10 @@ abstract class CrudController extends ApiBaseController implements CrudBaseContr
      */
     public function bulkAction(Request $request)
     {
+        // Disable service-level transactions; controller manages transactions
         $this->service->setIsTransactionEnabled(false);
-        $useTransaction = !$this->service->getIsTransactionEnabled();
 
-        if ($useTransaction) {
-            DB::beginTransaction();
-        }
+        DB::beginTransaction();
 
         try {
             // Validate request data
@@ -412,10 +354,7 @@ abstract class CrudController extends ApiBaseController implements CrudBaseContr
                     ->setData($data)
                     ->bulkActionJob();
 
-                if ($useTransaction) {
-                    DB::commit();
-                }
-
+                DB::commit();
                 return $this->success();
             }
 
@@ -425,30 +364,19 @@ abstract class CrudController extends ApiBaseController implements CrudBaseContr
                 ->bulkAction()
                 ->get();
 
-            if ($useTransaction) {
-                DB::commit();
-            }
-
+            DB::commit();
             return $this->getResource();
         } catch (ValidationException $th) {
-            if ($useTransaction) {
-                DB::rollBack();
-            }
+            DB::rollBack();
             return $this->error($th->getMessage(), 422, $th);
         } catch (NotFoundException $th) {
-            if ($useTransaction) {
-                DB::rollBack();
-            }
+            DB::rollBack();
             return $this->errorNotFound($th->getMessage(), $th);
         } catch (CreateException $th) {
-            if ($useTransaction) {
-                DB::rollBack();
-            }
+            DB::rollBack();
             return $this->errorBadRequest($th->getMessage(), $th);
         } catch (\Exception $th) {
-            if ($useTransaction) {
-                DB::rollBack();
-            }
+            DB::rollBack();
             return $this->errorBadRequest($th->getMessage(), $th);
         }
     }
