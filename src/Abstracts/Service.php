@@ -1665,8 +1665,47 @@ abstract class Service implements ServiceInterface
         foreach ($data as $key => $value) {
             if (empty($value) && $value !== '0' && $value !== 0 && $value !== false) continue;
 
-            // Handle different search patterns based on column type
-            if (strpos($key, 'search_by_') === 0) {
+            // Handle range searches for numeric and date fields FIRST (before exact match)
+            if (preg_match('/^search_by_(.+)_(min|max|from|to)$/', $key, $matches)) {
+                $column = $matches[1];
+                $range_type = $matches[2];
+
+                if (!in_array($column, $model_columns)) continue;
+
+                $column_type = $column_types[$column] ?? 'string';
+
+                if (in_array($column_type, ['integer', 'numeric'])) {
+                    switch ($range_type) {
+                        case 'min':
+                            $query = $query->when(!empty($value), function($q) use ($column, $value) {
+                                return $q->where($column, '>=', $value);
+                            });
+                            break;
+                        case 'max':
+                            $query = $query->when(!empty($value), function($q) use ($column, $value) {
+                                return $q->where($column, '<=', $value);
+                            });
+                            break;
+                    }
+                }
+
+                if ($column_type === 'date') {
+                    switch ($range_type) {
+                        case 'from':
+                            $query = $query->when(!empty($value), function($q) use ($column, $value) {
+                                return $q->whereDate($column, '>=', $value);
+                            });
+                            break;
+                        case 'to':
+                            $query = $query->when(!empty($value), function($q) use ($column, $value) {
+                                return $q->whereDate($column, '<=', $value);
+                            });
+                            break;
+                    }
+                }
+            }
+            // Handle exact match searches (after range searches to avoid conflicts)
+            elseif (strpos($key, 'search_by_') === 0) {
                 $column = str_replace('search_by_', '', $key);
 
                 if (!in_array($column, $model_columns)) continue;
@@ -1705,46 +1744,6 @@ abstract class Service implements ServiceInterface
                             return $q->where($column, '=', $value);
                         });
                         break;
-                }
-            }
-
-            // Handle range searches for numeric and date fields
-            elseif (preg_match('/^search_by_(.+)_(min|max|from|to)$/', $key, $matches)) {
-                $column = $matches[1];
-                $range_type = $matches[2];
-
-                if (!in_array($column, $model_columns)) continue;
-
-                $column_type = $column_types[$column] ?? 'string';
-
-                if (in_array($column_type, ['integer', 'numeric'])) {
-                    switch ($range_type) {
-                        case 'min':
-                            $query = $query->when(!empty($value), function($q) use ($column, $value) {
-                                return $q->where($column, '>=', $value);
-                            });
-                            break;
-                        case 'max':
-                            $query = $query->when(!empty($value), function($q) use ($column, $value) {
-                                return $q->where($column, '<=', $value);
-                            });
-                            break;
-                    }
-                }
-
-                if ($column_type === 'date') {
-                    switch ($range_type) {
-                        case 'from':
-                            $query = $query->when(!empty($value), function($q) use ($column, $value) {
-                                return $q->whereDate($column, '>=', $value);
-                            });
-                            break;
-                        case 'to':
-                            $query = $query->when(!empty($value), function($q) use ($column, $value) {
-                                return $q->whereDate($column, '<=', $value);
-                            });
-                            break;
-                    }
                 }
             }
         }
