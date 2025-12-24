@@ -1172,6 +1172,11 @@ abstract class Service implements ServiceInterface
                 'is_all' => 'sometimes|boolean',
                 'search' => 'sometimes|string',
                 'updated_at' => 'sometimes',
+                'group_bies' => 'sometimes|array',
+                'group_aggregate' => 'sometimes|string|in:first,last,min,max',
+                'group_order_by' => 'sometimes|string',
+                'group_order_direction' => 'sometimes|string|in:asc,desc',
+                'hierarchical' => 'sometimes|boolean',
             ];
             $model_columns = $this->getModelColumns();
             $column_types = $this->getColumnTypes();
