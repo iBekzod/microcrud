@@ -1045,9 +1045,9 @@ abstract class Service implements ServiceInterface
             $total_count = count($items);
             $success_count = 0;
             $changed_items = collect();
-            $commonQuery = $this->getQuery();
             foreach ($items as $item) {
-                $this->setQuery($commonQuery)->setData($item);
+                $this->query = null;
+                $this->setData($item);
                 if (isset($item["bulk_action"]) && in_array($item["bulk_action"], ['create', 'update', 'show', 'delete', 'restore'])) {
                     switch ($item["bulk_action"]) {
                         case 'create':
