@@ -156,7 +156,11 @@ abstract class Service implements ServiceInterface
      */
     public function __construct($model = null, $resource = null)
     {
-        $this->model = $model;
+        if(is_object($model)){
+            $this->model = $model;
+        }else{
+            $this->model = new $model();
+        }
         $this->cache_expires_at = Carbon::now()->addDay();
         $this->resource = $resource ?? ItemResource::class;
     }
