@@ -453,6 +453,10 @@ abstract class Service implements ServiceInterface
         if (!isset($this->model)) {
             throw new NotFoundException('Model is not set. Please set a model before calling getQuery().');
         }
+        $class = $this->model;
+        if (is_string($class) && class_exists($class)) {
+            $this->model = new $class();
+        }
         return $this->model->newQuery();
     }
 
