@@ -156,11 +156,19 @@ abstract class Service implements ServiceInterface
      */
     public function __construct($model = null, $resource = null)
     {
-        if(is_object($model)){
+        if (is_object($model)) {
             $this->model = $model;
-        }else{
+        } elseif (is_string($model) && class_exists($model)) {
             $this->model = new $model();
+        } elseif ($this->model === null) {
+            $class = $this->model;
+            if (is_string($class) && class_exists($class)) {
+                $this->model = new $class();
+            } else {
+                throw new \InvalidArgumentException("Cannot resolve a valid model instance.");
+            }
         }
+
         $this->cache_expires_at = Carbon::now()->addDay();
         $this->resource = $resource ?? ItemResource::class;
     }
