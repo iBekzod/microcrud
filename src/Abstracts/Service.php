@@ -598,7 +598,7 @@ abstract class Service implements ServiceInterface
     public function setData($data)
     {
         if (isset($data)) {
-            Log::info("Set data:", $data);
+            // Log::info("Set data:", $data);
             $this->data = $data;
         } else {
             throw new NotFoundException();
@@ -904,8 +904,8 @@ abstract class Service implements ServiceInterface
             $filtered_data = array_intersect_key($data, array_flip($keys));
             $model = $this->model::create($filtered_data);
             $this->set($model);
-            Log::info("Model created:");
-            Log::info($model);
+            // Log::info("Model created:");
+            // Log::info($model);
         } catch (\Exception $exception) {
             if ($this->getIsTransactionEnabled())
                 DB::rollBack();
@@ -2036,7 +2036,7 @@ abstract class Service implements ServiceInterface
                     break; // Only support one window function group at a time
                 } elseif (!empty($config['page']) || !empty($config['limit'])) {
                     // This is regular pagination but on grouped results
-                    Log::info("MicroCRUD: Regular pagination on grouped data for '{$columnName}'. Groups will be paginated normally.");
+                    // Log::info("MicroCRUD: Regular pagination on grouped data for '{$columnName}'. Groups will be paginated normally.");
                 }
             }
 
