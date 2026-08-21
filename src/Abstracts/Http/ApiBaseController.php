@@ -177,21 +177,39 @@ abstract class ApiBaseController implements ApiController
             'message' => $message,
         ];
 
-        if ($exception) {
+        if ($exception && Config::get('app.debug', false)) {
             // Include stack trace in debug mode
-            if (Config::get('app.debug', false)) {
-                $result['error'] = $exception->getTraceAsString();
-            }
+            $result['error'] = $exception->getTraceAsString();
+        }
 
-            Log::error('API Error', [
-                'message' => $message,
-                'exception' => $exception->getMessage(),
-                'file' => $exception->getFile(),
-                'line' => $exception->getLine(),
-                'trace' => $exception->getTraceAsString(),
-            ]);
+        // 4xx — MIJOZ xatosi: mavjud bo'lmagan id so'ralgan, validatsiya
+        // o'tmagan va hokazo. Bu server nosozligi EMAS, shuning uchun
+        // ERROR darajasida va stack trace bilan yozilmaydi.
+        //
+        // NEGA MUHIM (o'lchov, 2026-08-21): bitta integratsiya mavjud
+        // bo'lmagan 153 ta shartnoma raqamini qayta-qayta so'rab turgan
+        // edi — 21 daqiqada 10 600 chaqiruv, har biri to'liq trace bilan
+        // ERROR yozardi. Natijada laravel.log 31 GB ga yetdi va disk
+        // 82% ga to'ldi. Trace bu yerda hech narsani hal qilmaydi:
+        // xatoning sababi so'rovda, kodda emas.
+        $isClientError = $status_code >= 400 && $status_code < 500;
+
+        $context = ['message' => $message, 'status' => $status_code];
+        if ($exception) {
+            $context['exception'] = $exception->getMessage();
+            $context['file'] = $exception->getFile();
+            $context['line'] = $exception->getLine();
+        }
+
+        if ($isClientError) {
+            // Diagnostika uchun yetarli, lekin logni ko'mib tashlamaydi.
+            Log::info('API client error', $context);
         } else {
-            Log::error('API Error', ['message' => $message]);
+            // 5xx — haqiqiy nosozlik: to'liq trace kerak.
+            if ($exception) {
+                $context['trace'] = $exception->getTraceAsString();
+            }
+            Log::error('API Error', $context);
         }
 
         return response()->json($result, $status_code);
